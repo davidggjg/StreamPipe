@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StreamPipe 🚰</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:      #0a0a0f;
+    --surface: #12121a;
+    --border:  #1e1e2e;
+    --accent:  #00e5ff;
+    --accent2: #7c3aed;
+    --green:   #00e676;
+    --red:     #ff1744;
+    --text:    #e2e2f0;
+    --muted:   #5a5a7a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Heebo', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+  }
+  header {
+    position: relative; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(10,10,15,0.9);
+    backdrop-filter: blur(12px);
+  }
+  .logo {
+    font-family: 'Space Mono', monospace;
+    font-size: 1.1rem; font-weight: 700;
+    letter-spacing: 2px; color: var(--accent);
+  }
+  .logo span {
+    font-size: 0.7rem; color: var(--muted);
+    font-weight: 400; margin-right: 10px;
+  }
+  main {
+    position: relative; z-index: 1;
+    max-width: 640px;
+    margin: 60px auto;
+    padding: 0 24px;
+  }
+  .hero { text-align: center; margin-bottom: 40px; }
+  .hero h1 {
+    font-size: 2.6rem; font-weight: 900; line-height: 1.1; margin-bottom: 10px;
+  }
+  .hero h1 em {
+    font-style: normal;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .hero p { color: var(--muted); font-size: 0.95rem; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px; padding: 32px;
+    position: relative; overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute; top: 0; right: 0;
+    width: 180px; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent));
+  }
+  .field { margin-bottom: 18px; }
+  label {
+    display: block;
+    font-size: 0.72rem; font-weight: 500;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 7px;
+  }
+  input {
+    width: 100%;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px;
+    color: var(--text); font-family: 'Heebo', sans-serif;
+    font-size: 0.95rem; outline: none; transition: all 0.2s;
+    direction: ltr; text-align: left;
+  }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,229,255,0.1); }
+  input::placeholder { color: var(--muted); opacity: 0.5; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .btn {
+    width: 100%; padding: 15px;
+    background: linear-gradient(135deg, var(--accent), #0097a7);
+    color: #000; font-family: 'Heebo', sans-serif;
+    font-size: 1rem; font-weight: 700;
+    border: none; border-radius: 10px;
+    cursor: pointer; letter-spacing: 0.5px;
+    transition: all 0.2s; margin-top: 6px;
+    position: relative; overflow: hidden;
+  }
+  .btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,229,255,0.3); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.loading::after {
+    content: '';
+    position: absolute; top: 0; right: -100%; width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+    animation: shimmer 1.2s infinite;
+  }
+  @keyframes shimmer { to { right: 100%; } }
+  #status-box { margin-top: 20px; display: none; }
+  .status {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 16px; border-radius: 10px;
+    font-size: 0.88rem; border: 1px solid;
+  }
+  .status.loading { background: rgba(0,229,255,0.05); border-color: rgba(0,229,255,0.2); color: var(--accent); }
+  .status.success { background: rgba(0,230,118,0.05); border-color: rgba(0,230,118,0.2); color: var(--green); }
+  .status.error   { background: rgba(255,23,68,0.05);  border-color: rgba(255,23,68,0.2);  color: var(--red); }
+  .spinner {
+    width: 15px; height: 15px; flex-shrink: 0;
+    border: 2px solid rgba(0,229,255,0.2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .result-link {
+    display: block; margin-top: 10px;
+    padding: 11px 14px;
+    background: rgba(0,230,118,0.05);
+    border: 1px solid rgba(0,230,118,0.2);
+    border-radius: 8px; color: var(--green);
+    text-decoration: none;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem; word-break: break-all;
+    direction: ltr; text-align: left;
+    transition: background 0.2s;
+  }
+  .result-link:hover { background: rgba(0,230,118,0.1); }
+  .pipe-diagram {
+    display: flex; align-items: center; justify-content: center;
+    margin-top: 28px; padding: 18px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border); border-radius: 12px;
+    font-size: 0.72rem; color: var(--muted);
+  }
+  .pipe-node { text-align: center; padding: 6px 14px; }
+  .pipe-node .icon { font-size: 1.3rem; display: block; margin-bottom: 3px; }
+  .pipe-arrow {
+    flex: 1; max-width: 70px; height: 2px;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    position: relative;
+  }
+  .pipe-arrow::after {
+    content: '';
+    position: absolute; top: -4px; left: 0;
+    width: 10px; height: 10px;
+    background: var(--accent);
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
+    animation: flow 1.8s ease-in-out infinite;
+  }
+  @keyframes flow {
+    0%   { left: 0; opacity: 0; }
+    20%  { opacity: 1; }
+    80%  { opacity: 1; }
+    100% { left: calc(100% - 10px); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">STREAMPIPE <span>Drive → Archive</span></div>
+</header>
+
+<main>
+  <div class="hero">
+    <h1>צינור <em>חכם</em><br>לסרטים שלך</h1>
+    <p>מגוגל דרייב לארכיון — בלי לגעת בדיסק</p>
+  </div>
+
+  <div class="card">
+    <div class="field">
+      <label>קישור מגוגל דרייב</label>
+      <input type="text" id="driveUrl" placeholder="https://drive.google.com/file/d/..." />
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>שם קובץ ביעד</label>
+        <input type="text" id="fileName" placeholder="film.mp4" />
+      </div>
+      <div class="field">
+        <label>Bucket (אופציונלי)</label>
+        <input type="text" id="bucketName" placeholder="ברירת מחדל מהשרת" />
+      </div>
+    </div>
+
+    <button class="btn" id="btn" onclick="startPipe()">🚰 הזרם עכשיו!</button>
+
+    <div id="status-box">
+      <div id="status-line" class="status loading">
+        <div class="spinner" id="spinner"></div>
+        <span id="status-text"></span>
+      </div>
+      <a id="result-link" class="result-link" href="#" target="_blank" style="display:none"></a>
+    </div>
+
+    <div class="pipe-diagram">
+      <div class="pipe-node"><span class="icon">☁️</span>Google Drive</div>
+      <div class="pipe-arrow"></div>
+      <div class="pipe-node"><span class="icon">🚰</span>Render</div>
+      <div class="pipe-arrow"></div>
+      <div class="pipe-node"><span class="icon">🏛️</span>Archive.org</div>
+    </div>
+  </div>
+</main>
+
+<script>
+  async function startPipe() {
+    const driveUrl   = document.getElementById('driveUrl').value.trim();
+    const fileName   = document.getElementById('fileName').value.trim();
+    const bucketName = document.getElementById('bucketName').value.trim();
+
+    if (!driveUrl) return setStatus('error', '⚠ הכנס קישור גוגל דרייב');
+
+    const btn = document.getElementById('btn');
+    btn.disabled = true;
+    btn.classList.add('loading');
+    btn.textContent = '⏳ מעביר...';
+
+    document.getElementById('result-link').style.display = 'none';
+
+    const msgs = ['פותח חיבור לגוגל... 📥', 'מזרים לארכיון... 📤', 'הצינור עובד, המתן... 🚰'];
+    let mi = 0;
+    setStatus('loading', msgs[0]);
+    const iv = setInterval(() => {
+      mi = (mi + 1) % msgs.length;
+      if (document.getElementById('status-line').classList.contains('loading'))
+        document.getElementById('status-text').textContent = msgs[mi];
+    }, 3000);
+
+    try {
+      const res  = await fetch('/pipe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driveUrl, fileName, bucketName }),
+      });
+      const data = await res.json();
+      clearInterval(iv);
+
+      if (data.ok) {
+        setStatus('success', '✅ ' + data.msg);
+        const link = document.getElementById('result-link');
+        link.href = data.archiveUrl;
+        link.textContent = '🔗 ' + data.archiveUrl;
+        link.style.display = 'block';
+      } else {
+        setStatus('error', '❌ ' + data.msg);
+      }
+    } catch (e) {
+      clearInterval(iv);
+      setStatus('error', '❌ שגיאת רשת: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      btn.textContent = '🚰 הזרם עכשיו!';
+    }
+  }
+
+  function setStatus(type, text) {
+    const box  = document.getElementById('status-box');
+    const line = document.getElementById('status-line');
+    const spin = document.getElementById('spinner');
+    box.style.display  = 'block';
+    line.className     = 'status ' + type;
+    spin.style.display = type === 'loading' ? 'block' : 'none';
+    document.getElementById('status-text').textContent = text;
+  }
+</script>
+</body>
+</html>
