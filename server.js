@@ -1,14 +1,85 @@
 const express = require('express');
 const axios   = require('axios');
+const fs      = require('fs');
+const path    = require('path');
 const app     = express();
 
 app.use(express.json());
 app.use(express.static('public'));
 
-// ── Health check בשביל UptimeRobot ──
+const KEYS_FILE = path.join(__dirname, 'keys.json');
+
+// ── קריאת מפתחות מהקובץ ──
+function loadKeys() {
+  try {
+    if (fs.existsSync(KEYS_FILE))
+      return JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+  } catch (e) {}
+  return {};
+}
+
+// ── שמירת מפתחות לקובץ ──
+function saveKeys(keys) {
+  fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
+}
+
+// ── Health check ──
 app.get('/healthz', (req, res) => res.send('OK'));
 
-// ── חילוץ File ID מקישור גוגל דרייב ──
+// ── שמירת מפתחות ──
+app.post('/save-keys', async (req, res) => {
+  const { archiveKey, archiveSecret, bucketName } = req.body;
+
+  if (!archiveKey || !archiveSecret || !bucketName)
+    return res.status(400).json({
+      ok: false,
+      msg: '❌ כל השדות חובה — Access Key, Secret Key ושם Bucket'
+    });
+
+  // בדיקת תקינות מול Archive.org
+  try {
+    await axios.get('https://s3.us.archive.org', {
+      headers: { Authorization: `LOW ${archiveKey}:${archiveSecret}` },
+      timeout: 8000,
+    });
+  } catch (err) {
+    const status = err.response?.status;
+    if (status === 403)
+      return res.status(400).json({ ok: false, msg: '❌ Access Key או Secret Key שגויים — בדוק שהעתקת נכון' });
+    if (status === 401)
+      return res.status(400).json({ ok: false, msg: '❌ המפתחות לא מורשים — בדוק הרשאות בחשבון Archive.org' });
+    if (!err.response)
+      return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת — לא הצלחתי להגיע ל-Archive.org: ${err.message}` });
+    return res.status(400).json({ ok: false, msg: `❌ שגיאה ${status}: ${err.message}` });
+  }
+
+  // בדיקת Bucket
+  try {
+    await axios.head(`https://s3.us.archive.org/${bucketName}`, {
+      headers: { Authorization: `LOW ${archiveKey}:${archiveSecret}` },
+      timeout: 8000,
+    });
+  } catch (err) {
+    const status = err.response?.status;
+    if (status === 404)
+      return res.status(400).json({ ok: false, msg: `❌ Bucket "${bucketName}" לא קיים — בדוק את השם או צור אוסף חדש ב-Archive.org` });
+    // 403 על bucket זה בסדר — הוא קיים
+  }
+
+  saveKeys({ archiveKey, archiveSecret, bucketName });
+  res.json({ ok: true, msg: '✅ המפתחות נשמרו ונבדקו בהצלחה!' });
+});
+
+// ── קבלת סטטוס מפתחות (בלי לחשוף אותם) ──
+app.get('/keys-status', (req, res) => {
+  const keys = loadKeys();
+  res.json({
+    hasKeys: !!(keys.archiveKey && keys.archiveSecret && keys.bucketName),
+    bucketName: keys.bucketName || null,
+  });
+});
+
+// ── חילוץ File ID ──
 function extractFileId(url) {
   const m1 = url.match(/\/d\/([a-zA-Z0-9_-]{25,})/);
   if (m1) return m1[1];
@@ -17,79 +88,51 @@ function extractFileId(url) {
   return null;
 }
 
-// ── stream הורדה מגוגל כולל טיפול בדף אישור ──
+// ── stream הורדה מגוגל ──
 async function getDownloadStream(fileId) {
   const baseUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-
   const res1 = await axios.get(baseUrl, {
-    responseType: 'stream',
-    maxRedirects: 5,
-    timeout: 30000,
+    responseType: 'stream', maxRedirects: 5, timeout: 30000,
     headers: { 'User-Agent': 'Mozilla/5.0' },
   });
-
   const ct = res1.headers['content-type'] || '';
-
   if (ct.includes('text/html')) {
     res1.data.destroy();
     const cookies = (res1.headers['set-cookie'] || [])
       .map(c => c.split(';')[0]).join('; ');
-
     const res2 = await axios.get(baseUrl + '&confirm=t', {
-      responseType: 'stream',
-      maxRedirects: 5,
-      timeout: 30000,
+      responseType: 'stream', maxRedirects: 5, timeout: 30000,
       headers: { 'User-Agent': 'Mozilla/5.0', Cookie: cookies },
     });
     return {
-      stream:        res2.data,
-      contentType:   res2.headers['content-type'] || 'application/octet-stream',
+      stream: res2.data,
+      contentType: res2.headers['content-type'] || 'application/octet-stream',
       contentLength: res2.headers['content-length'] || null,
     };
   }
-
   return {
-    stream:        res1.data,
-    contentType:   ct || 'application/octet-stream',
+    stream: res1.data,
+    contentType: ct || 'application/octet-stream',
     contentLength: res1.headers['content-length'] || null,
   };
 }
 
-// ── בדיקת מפתחות ──
-app.post('/test-keys', async (req, res) => {
-  const { archiveKey, archiveSecret } = req.body;
-  if (!archiveKey || !archiveSecret)
-    return res.status(400).json({ ok: false, msg: 'מפתחות חסרים' });
-  try {
-    await axios.get('https://s3.us.archive.org', {
-      headers: { Authorization: `LOW ${archiveKey}:${archiveSecret}` },
-      timeout: 8000,
-    });
-    res.json({ ok: true, msg: 'המפתחות תקינים ✅' });
-  } catch (err) {
-    res.status(400).json({
-      ok: false,
-      msg: err.response?.status === 403 ? 'מפתחות שגויים ❌' : `שגיאה: ${err.message}`
-    });
-  }
-});
-
-// ── הצינור הראשי — אפס כתיבה לדיסק ──
+// ── הצינור הראשי ──
 app.post('/pipe', async (req, res) => {
-  const { driveUrl, bucketName, fileName } = req.body;
+  const { driveUrl, fileName, bucketName: bucketOverride } = req.body;
+  const keys = loadKeys();
 
-  // מפתחות מגיעים מ-Environment Variables של Render
-  const archiveKey    = process.env.ARCHIVE_KEY;
-  const archiveSecret = process.env.ARCHIVE_SECRET;
-  const bucket        = bucketName || process.env.ARCHIVE_BUCKET;
+  if (!keys.archiveKey || !keys.archiveSecret)
+    return res.status(400).json({ ok: false, msg: '❌ מפתחות לא מוגדרים — פתח את ההגדרות (⚙) והכנס מפתחות' });
 
-  if (!driveUrl || !archiveKey || !archiveSecret || !bucket)
-    return res.status(400).json({ ok: false, msg: 'שדות חסרים או מפתחות לא מוגדרים בשרת' });
+  if (!driveUrl)
+    return res.status(400).json({ ok: false, msg: '❌ הכנס קישור גוגל דרייב' });
 
   const fileId = extractFileId(driveUrl);
   if (!fileId)
-    return res.status(400).json({ ok: false, msg: 'לא הצלחתי לחלץ File ID' });
+    return res.status(400).json({ ok: false, msg: '❌ לא הצלחתי לחלץ File ID — בדוק שהקישור תקין' });
 
+  const bucket   = bucketOverride || keys.bucketName;
   const destFile = (fileName || `file_${fileId}`).replace(/[^a-zA-Z0-9._-]/g, '_');
 
   try {
@@ -98,7 +141,7 @@ app.post('/pipe', async (req, res) => {
 
     const uploadUrl = `https://s3.us.archive.org/${bucket}/${destFile}`;
     const headers = {
-      Authorization:                `LOW ${archiveKey}:${archiveSecret}`,
+      Authorization:                `LOW ${keys.archiveKey}:${keys.archiveSecret}`,
       'Content-Type':               contentType,
       'x-archive-auto-make-bucket': '1',
       'x-archive-meta-mediatype':   'movies',
@@ -118,7 +161,10 @@ app.post('/pipe', async (req, res) => {
 
   } catch (err) {
     console.error('[pipe] ❌', err.message);
-    res.status(500).json({ ok: false, msg: err.message });
+    const msg = err.code === 'ECONNREFUSED'
+      ? '❌ לא הצלחתי להתחבר ל-Archive.org'
+      : `❌ שגיאה: ${err.message}`;
+    res.status(500).json({ ok: false, msg });
   }
 });
 
