@@ -70,29 +70,40 @@ function extractFileId(url) {
 
 async function getDownloadStream(fileId) {
   const baseUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+
+  // בקשה ראשונה — לקבל confirm token מתוך ה-HTML
   const res1 = await axios.get(baseUrl, {
-    responseType: 'stream', maxRedirects: 5, timeout: 30000,
+    maxRedirects: 5,
+    timeout: 30000,
     headers: { 'User-Agent': 'Mozilla/5.0' },
   });
-  const ct = res1.headers['content-type'] || '';
-  if (ct.includes('text/html')) {
-    res1.data.destroy();
-    const cookies = (res1.headers['set-cookie'] || [])
-      .map(c => c.split(';')[0]).join('; ');
-    const res2 = await axios.get(baseUrl + '&confirm=t', {
-      responseType: 'stream', maxRedirects: 5, timeout: 30000,
-      headers: { 'User-Agent': 'Mozilla/5.0', Cookie: cookies },
-    });
-    return {
-      stream: res2.data,
-      contentType: res2.headers['content-type'] || 'application/octet-stream',
-      contentLength: res2.headers['content-length'] || null,
-    };
+
+  let downloadUrl = baseUrl;
+
+  // חיפוש confirm token
+  const confirmMatch = res1.data.match(/confirm=([0-9A-Za-z_]+)/);
+  const uuidMatch    = res1.data.match(/uuid=([0-9A-Za-z_-]+)/);
+
+  if (confirmMatch) {
+    downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=${confirmMatch[1]}`;
+    if (uuidMatch) downloadUrl += `&uuid=${uuidMatch[1]}`;
   }
+
+  // הורדה אמיתית עם stream
+  const res2 = await axios.get(downloadUrl, {
+    responseType: 'stream',
+    maxRedirects: 10,
+    timeout: 30000,
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Cookie': (res1.headers['set-cookie'] || []).map(c => c.split(';')[0]).join('; '),
+    },
+  });
+
   return {
-    stream: res1.data,
-    contentType: ct || 'application/octet-stream',
-    contentLength: res1.headers['content-length'] || null,
+    stream:        res2.data,
+    contentType:   res2.headers['content-type'] || 'application/octet-stream',
+    contentLength: res2.headers['content-length'] || null,
   };
 }
 
