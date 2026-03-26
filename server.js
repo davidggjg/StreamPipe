@@ -9,7 +9,6 @@ app.use(express.static('public'));
 
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// ── קריאת מפתחות מהקובץ ──
 function loadKeys() {
   try {
     if (fs.existsSync(KEYS_FILE))
@@ -18,15 +17,12 @@ function loadKeys() {
   return {};
 }
 
-// ── שמירת מפתחות לקובץ ──
 function saveKeys(keys) {
   fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
 }
 
-// ── Health check ──
 app.get('/healthz', (req, res) => res.send('OK'));
 
-// ── שמירת מפתחות ──
 app.post('/save-keys', async (req, res) => {
   const { archiveKey, archiveSecret, bucketName } = req.body;
 
@@ -36,7 +32,6 @@ app.post('/save-keys', async (req, res) => {
       msg: '❌ כל השדות חובה — Access Key, Secret Key ושם Bucket'
     });
 
-  // בדיקת תקינות מול Archive.org
   try {
     await axios.get('https://s3.us.archive.org', {
       headers: { Authorization: `LOW ${archiveKey}:${archiveSecret}` },
@@ -45,32 +40,18 @@ app.post('/save-keys', async (req, res) => {
   } catch (err) {
     const status = err.response?.status;
     if (status === 403)
-      return res.status(400).json({ ok: false, msg: '❌ Access Key או Secret Key שגויים — בדוק שהעתקת נכון' });
+      return res.status(400).json({ ok: false, msg: '❌ Access Key או Secret Key שגויים' });
     if (status === 401)
-      return res.status(400).json({ ok: false, msg: '❌ המפתחות לא מורשים — בדוק הרשאות בחשבון Archive.org' });
+      return res.status(400).json({ ok: false, msg: '❌ המפתחות לא מורשים' });
     if (!err.response)
-      return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת — לא הצלחתי להגיע ל-Archive.org: ${err.message}` });
+      return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת: ${err.message}` });
     return res.status(400).json({ ok: false, msg: `❌ שגיאה ${status}: ${err.message}` });
   }
 
-  // בדיקת Bucket
-  try {
-    await axios.head(`https://s3.us.archive.org/${bucketName}`, {
-      headers: { Authorization: `LOW ${archiveKey}:${archiveSecret}` },
-      timeout: 8000,
-    });
-  } catch (err) {
-    const status = err.response?.status;
-    if (status === 404)
-      return res.status(400).json({ ok: false, msg: `❌ Bucket "${bucketName}" לא קיים — בדוק את השם או צור אוסף חדש ב-Archive.org` });
-    // 403 על bucket זה בסדר — הוא קיים
-  }
-
   saveKeys({ archiveKey, archiveSecret, bucketName });
-  res.json({ ok: true, msg: '✅ המפתחות נשמרו ונבדקו בהצלחה!' });
+  res.json({ ok: true, msg: '✅ המפתחות נשמרו בהצלחה!' });
 });
 
-// ── קבלת סטטוס מפתחות (בלי לחשוף אותם) ──
 app.get('/keys-status', (req, res) => {
   const keys = loadKeys();
   res.json({
@@ -79,7 +60,6 @@ app.get('/keys-status', (req, res) => {
   });
 });
 
-// ── חילוץ File ID ──
 function extractFileId(url) {
   const m1 = url.match(/\/d\/([a-zA-Z0-9_-]{25,})/);
   if (m1) return m1[1];
@@ -88,7 +68,6 @@ function extractFileId(url) {
   return null;
 }
 
-// ── stream הורדה מגוגל ──
 async function getDownloadStream(fileId) {
   const baseUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
   const res1 = await axios.get(baseUrl, {
@@ -117,20 +96,19 @@ async function getDownloadStream(fileId) {
   };
 }
 
-// ── הצינור הראשי ──
 app.post('/pipe', async (req, res) => {
   const { driveUrl, fileName, bucketName: bucketOverride } = req.body;
   const keys = loadKeys();
 
   if (!keys.archiveKey || !keys.archiveSecret)
-    return res.status(400).json({ ok: false, msg: '❌ מפתחות לא מוגדרים — פתח את ההגדרות (⚙) והכנס מפתחות' });
+    return res.status(400).json({ ok: false, msg: '❌ מפתחות לא מוגדרים — פתח הגדרות (⚙)' });
 
   if (!driveUrl)
     return res.status(400).json({ ok: false, msg: '❌ הכנס קישור גוגל דרייב' });
 
   const fileId = extractFileId(driveUrl);
   if (!fileId)
-    return res.status(400).json({ ok: false, msg: '❌ לא הצלחתי לחלץ File ID — בדוק שהקישור תקין' });
+    return res.status(400).json({ ok: false, msg: '❌ קישור לא תקין' });
 
   const bucket   = bucketOverride || keys.bucketName;
   const destFile = (fileName || `file_${fileId}`).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -161,10 +139,7 @@ app.post('/pipe', async (req, res) => {
 
   } catch (err) {
     console.error('[pipe] ❌', err.message);
-    const msg = err.code === 'ECONNREFUSED'
-      ? '❌ לא הצלחתי להתחבר ל-Archive.org'
-      : `❌ שגיאה: ${err.message}`;
-    res.status(500).json({ ok: false, msg });
+    res.status(500).json({ ok: false, msg: `❌ שגיאה: ${err.message}` });
   }
 });
 
