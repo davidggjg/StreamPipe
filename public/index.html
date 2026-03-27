@@ -51,9 +51,9 @@
     border-radius: 20px; border: 1px solid;
     display: flex; align-items: center; gap: 4px;
   }
-  .badge.ok  { border-color: rgba(0,230,118,0.3); color: var(--green); }
-  .badge.err { border-color: rgba(255,23,68,0.3);  color: var(--red); }
-  .badge.warn{ border-color: rgba(255,214,0,0.3);  color: var(--yellow); }
+  .badge.ok   { border-color: rgba(0,230,118,0.3); color: var(--green); }
+  .badge.err  { border-color: rgba(255,23,68,0.3);  color: var(--red); }
+  .badge.warn { border-color: rgba(255,214,0,0.3);  color: var(--yellow); }
   .settings-btn {
     background: none; border: 1px solid var(--border);
     color: var(--muted); width: 38px; height: 38px;
@@ -135,7 +135,7 @@
     background: rgba(0,230,118,0.04); border: 1px solid rgba(0,230,118,0.2);
     border-radius: 8px; color: var(--green); text-decoration: none;
     font-family: 'Space Mono', monospace; font-size: 0.72rem;
-    word-break: break-all; direction: ltr; text-align: left; transition: background 0.2s;
+    word-break: break-all; direction: ltr; text-align: left;
   }
   .result-link:hover { background: rgba(0,230,118,0.09); }
   .pipe-diagram {
@@ -157,12 +157,9 @@
     animation: flow 1.8s ease-in-out infinite;
   }
   @keyframes flow {
-    0%   { left: 0; opacity: 0; }
-    20%  { opacity: 1; } 80% { opacity: 1; }
-    100% { left: calc(100% - 10px); opacity: 0; }
+    0%   { left: 0; opacity: 0; } 20% { opacity: 1; }
+    80%  { opacity: 1; } 100% { left: calc(100% - 10px); opacity: 0; }
   }
-
-  /* ── מודל הגדרות ── */
   .overlay {
     display: none; position: fixed; inset: 0;
     background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
@@ -172,7 +169,7 @@
   .modal {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 16px; padding: 28px; width: 100%;
-    max-width: 420px; margin: 16px;
+    max-width: 440px; margin: 16px;
     animation: slideUp 0.2s ease;
   }
   @keyframes slideUp {
@@ -187,8 +184,7 @@
   .close-btn {
     background: none; border: 1px solid var(--border); color: var(--muted);
     width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
-    font-size: 0.9rem; display: flex; align-items: center; justify-content: center;
-    transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center; transition: all 0.15s;
   }
   .close-btn:hover { border-color: var(--red); color: var(--red); }
   .btn-save {
@@ -197,7 +193,7 @@
     border: none; border-radius: 8px; cursor: pointer; margin-top: 6px;
     transition: all 0.2s; position: relative; overflow: hidden;
   }
-  .btn-save:hover:not(:disabled) { background: #6d28d9; transform: translateY(-1px); }
+  .btn-save:hover:not(:disabled) { background: #6d28d9; }
   .btn-save:disabled { opacity: 0.45; cursor: not-allowed; }
   .btn-save.loading::after {
     content: ''; position: absolute; top: 0; right: -100%;
@@ -211,6 +207,14 @@
   }
   .key-result.ok  { background: rgba(0,230,118,0.05); border-color: rgba(0,230,118,0.25); color: var(--green); }
   .key-result.err { background: rgba(255,23,68,0.05);  border-color: rgba(255,23,68,0.25);  color: var(--red); }
+  .divider {
+    border: none; border-top: 1px solid var(--border);
+    margin: 16px 0;
+  }
+  .section-label {
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 12px;
+  }
 </style>
 </head>
 <body>
@@ -236,12 +240,12 @@
     </div>
     <div class="row">
       <div class="field">
-        <label>שם קובץ ביעד</label>
-        <input type="text" id="fileName" placeholder="film.mp4" />
+        <label>שם קובץ ביעד (אופציונלי)</label>
+        <input type="text" id="fileName" placeholder="אוטומטי מגוגל" />
       </div>
       <div class="field">
         <label>Bucket (אופציונלי)</label>
-        <input type="text" id="bucketOverride" placeholder="ברירת מחדל מההגדרות" />
+        <input type="text" id="bucketOverride" placeholder="מההגדרות" />
       </div>
     </div>
 
@@ -265,7 +269,6 @@
   </div>
 </main>
 
-<!-- מודל הגדרות -->
 <div class="overlay" id="overlay" onclick="handleOverlay(event)">
   <div class="modal">
     <div class="modal-header">
@@ -273,17 +276,26 @@
       <button class="close-btn" onclick="closeSettings()">✕</button>
     </div>
 
+    <div class="section-label">🏛️ Archive.org</div>
     <div class="field">
-      <label>Archive.org — Access Key</label>
+      <label>Access Key</label>
       <input type="password" id="archiveKey" placeholder="••••••••••••••••" />
     </div>
     <div class="field">
-      <label>Archive.org — Secret Key</label>
+      <label>Secret Key</label>
       <input type="password" id="archiveSecret" placeholder="••••••••••••••••" />
     </div>
     <div class="field">
-      <label>שם Bucket (אוסף)</label>
-      <input type="text" id="bucketName" placeholder="my-films-collection" />
+      <label>שם Bucket (אוסף ברירת מחדל)</label>
+      <input type="text" id="bucketName" placeholder="david-movies" />
+    </div>
+
+    <hr class="divider">
+
+    <div class="section-label">☁️ Google Drive API</div>
+    <div class="field">
+      <label>Google API Key</label>
+      <input type="password" id="googleApiKey" placeholder="AIza••••••••••••••••••••••••••••••••••" />
     </div>
 
     <button class="btn-save" id="saveBtn" onclick="saveKeys()">
@@ -294,7 +306,6 @@
 </div>
 
 <script>
-  // ── בדיקת סטטוס מפתחות בטעינה ──
   async function checkKeysStatus() {
     try {
       const res  = await fetch('/keys-status');
@@ -307,9 +318,7 @@
         badge.className = 'badge err';
         badge.textContent = '⚠ מפתחות חסרים';
       }
-    } catch (e) {
-      document.getElementById('keys-badge').textContent = '? לא ידוע';
-    }
+    } catch (e) {}
   }
 
   function openSettings()  { document.getElementById('overlay').classList.add('open'); }
@@ -317,12 +326,8 @@
   function handleOverlay(e) { if (e.target === document.getElementById('overlay')) closeSettings(); }
 
   async function saveKeys() {
-    const key    = document.getElementById('archiveKey').value.trim();
-    const secret = document.getElementById('archiveSecret').value.trim();
-    const bucket = document.getElementById('bucketName').value.trim();
     const btn    = document.getElementById('saveBtn');
     const result = document.getElementById('key-result');
-
     btn.disabled = true;
     btn.classList.add('loading');
     btn.textContent = '⏳ בודק מפתחות...';
@@ -332,18 +337,18 @@
       const res  = await fetch('/save-keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ archiveKey: key, archiveSecret: secret, bucketName: bucket }),
+        body: JSON.stringify({
+          archiveKey:    document.getElementById('archiveKey').value.trim(),
+          archiveSecret: document.getElementById('archiveSecret').value.trim(),
+          bucketName:    document.getElementById('bucketName').value.trim(),
+          googleApiKey:  document.getElementById('googleApiKey').value.trim(),
+        }),
       });
       const data = await res.json();
-
       result.style.display = 'block';
       result.className = 'key-result ' + (data.ok ? 'ok' : 'err');
       result.textContent = data.msg;
-
-      if (data.ok) {
-        checkKeysStatus();
-        setTimeout(closeSettings, 1500);
-      }
+      if (data.ok) { checkKeysStatus(); setTimeout(closeSettings, 1500); }
     } catch (e) {
       result.style.display = 'block';
       result.className = 'key-result err';
@@ -355,28 +360,30 @@
     }
   }
 
-  // ── הצינור הראשי ──
   async function startPipe() {
-    const driveUrl      = document.getElementById('driveUrl').value.trim();
-    const fileName      = document.getElementById('fileName').value.trim();
+    const driveUrl       = document.getElementById('driveUrl').value.trim();
+    const fileName       = document.getElementById('fileName').value.trim();
     const bucketOverride = document.getElementById('bucketOverride').value.trim();
-
     if (!driveUrl) return setStatus('error', '⚠ הכנס קישור גוגל דרייב');
 
     const btn = document.getElementById('pipeBtn');
-    btn.disabled = true;
-    btn.classList.add('loading');
-    btn.textContent = '⏳ מעביר...';
+    btn.disabled = true; btn.classList.add('loading'); btn.textContent = '⏳ מעביר...';
     document.getElementById('result-link').style.display = 'none';
 
-    const msgs = ['פותח חיבור לגוגל... 📥', 'מזרים לארכיון... 📤', 'הצינור עובד, המתן... 🚰', 'עדיין עובד... קבצים גדולים לוקחים זמן ⏳'];
+    const msgs = [
+      '📡 מתחבר לגוגל דרייב...',
+      '📥 מוריד מגוגל...',
+      '📤 מעלה לארכיון...',
+      '🚰 הצינור עובד, המתן...',
+      '⏳ קבצים גדולים לוקחים זמן, אל תסגור...',
+    ];
     let mi = 0;
     setStatus('loading', msgs[0]);
     const iv = setInterval(() => {
-      mi = (mi + 1) % msgs.length;
+      mi = Math.min(mi + 1, msgs.length - 1);
       if (document.getElementById('status-line').classList.contains('loading'))
         document.getElementById('status-text').textContent = msgs[mi];
-    }, 4000);
+    }, 5000);
 
     try {
       const res  = await fetch('/pipe', {
@@ -386,7 +393,6 @@
       });
       const data = await res.json();
       clearInterval(iv);
-
       if (data.ok) {
         setStatus('success', '✅ ' + data.msg);
         const link = document.getElementById('result-link');
@@ -400,8 +406,7 @@
       clearInterval(iv);
       setStatus('error', '❌ שגיאת רשת: ' + e.message);
     } finally {
-      btn.disabled = false;
-      btn.classList.remove('loading');
+      btn.disabled = false; btn.classList.remove('loading');
       btn.textContent = '🚰 הזרם עכשיו!';
     }
   }
@@ -416,7 +421,6 @@
     document.getElementById('status-text').textContent = text;
   }
 
-  // טעינה ראשונית
   checkKeysStatus();
 </script>
 </body>
