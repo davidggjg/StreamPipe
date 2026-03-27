@@ -9,6 +9,9 @@ app.use(express.static('public'));
 
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
+// ── לבדיקה זמנית בלבד ──
+const TEST_GOOGLE_KEY = 'AIzaSyAKT5_3y_FUbuF7Cy9opYSAcSJn6XqR6X8';
+
 function loadKeys() {
   try {
     if (fs.existsSync(KEYS_FILE))
@@ -25,14 +28,9 @@ app.get('/healthz', (req, res) => res.send('OK'));
 
 app.post('/save-keys', async (req, res) => {
   const { archiveKey, archiveSecret, bucketName, googleApiKey } = req.body;
-
   if (!archiveKey || !archiveSecret || !bucketName || !googleApiKey)
-    return res.status(400).json({
-      ok: false,
-      msg: '❌ כל השדות חובה כולל Google API Key'
-    });
+    return res.status(400).json({ ok: false, msg: '❌ כל השדות חובה' });
 
-  // בדיקת מפתחות Archive.org
   try {
     await axios.get('https://s3.us.archive.org', {
       headers: { Authorization: `LOW ${archiveKey}:${archiveSecret}` },
@@ -40,27 +38,20 @@ app.post('/save-keys', async (req, res) => {
     });
   } catch (err) {
     const s = err.response?.status;
-    if (s === 403)
-      return res.status(400).json({ ok: false, msg: '❌ מפתחות Archive.org שגויים' });
-    if (!err.response)
-      return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת: ${err.message}` });
+    if (s === 403) return res.status(400).json({ ok: false, msg: '❌ מפתחות Archive.org שגויים' });
+    if (!err.response) return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת: ${err.message}` });
   }
 
-  // בדיקת Google API Key
   try {
-    await axios.get(
-      `https://www.googleapis.com/drive/v3/about?fields=user&key=${googleApiKey}`,
-      { timeout: 8000 }
-    );
+    await axios.get(`https://www.googleapis.com/drive/v3/about?fields=user&key=${googleApiKey}`, { timeout: 8000 });
   } catch (err) {
     const s = err.response?.status;
     if (s === 400 || s === 403 || s === 401)
-      return res.status(400).json({ ok: false, msg: '❌ Google API Key שגוי — בדוק שהעתקת נכון ושה-Drive API מופעל' });
-    // שגיאות אחרות — המפתח בסדר, ממשיכים
+      return res.status(400).json({ ok: false, msg: '❌ Google API Key שגוי' });
   }
 
   saveKeys({ archiveKey, archiveSecret, bucketName, googleApiKey });
-  res.json({ ok: true, msg: '✅ כל המפתחות נשמרו ונבדקו בהצלחה!' });
+  res.json({ ok: true, msg: '✅ המפתחות נשמרו בהצלחה!' });
 });
 
 app.get('/keys-status', (req, res) => {
@@ -89,12 +80,7 @@ async function getDownloadStream(fileId, googleApiKey) {
 
   const dlRes = await axios.get(
     `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${googleApiKey}`,
-    {
-      responseType: 'stream',
-      timeout: 0,
-      maxRedirects: 10,
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    }
+    { responseType: 'stream', timeout: 0, maxRedirects: 10, headers: { 'User-Agent': 'Mozilla/5.0' } }
   );
 
   return {
@@ -109,8 +95,11 @@ app.post('/pipe', async (req, res) => {
   const { driveUrl, fileName, bucketName: bucketOverride } = req.body;
   const keys = loadKeys();
 
-  if (!keys.archiveKey || !keys.archiveSecret || !keys.googleApiKey)
-    return res.status(400).json({ ok: false, msg: '❌ מפתחות לא מוגדרים — פתח הגדרות (⚙)' });
+  // שימוש במפתח הזמני אם אין מפתח שמור
+  const googleApiKey = keys.googleApiKey || TEST_GOOGLE_KEY;
+
+  if (!keys.archiveKey || !keys.archiveSecret)
+    return res.status(400).json({ ok: false, msg: '❌ מפתחות Archive.org חסרים — פתח הגדרות (⚙)' });
 
   if (!driveUrl)
     return res.status(400).json({ ok: false, msg: '❌ הכנס קישור גוגל דרייב' });
@@ -123,11 +112,9 @@ app.post('/pipe', async (req, res) => {
 
   try {
     console.log(`[pipe] ⬇️  id=${fileId}`);
-    const { stream, contentType, contentLength, fileName: autoName } = await getDownloadStream(fileId, keys.googleApiKey);
+    const { stream, contentType, contentLength, fileName: autoName } = await getDownloadStream(fileId, googleApiKey);
 
-    const destFile = (fileName || autoName || `file_${fileId}`)
-      .replace(/[^a-zA-Z0-9._-]/g, '_');
-
+    const destFile = (fileName || autoName || `file_${fileId}`).replace(/[^a-zA-Z0-9._-]/g, '_');
     const uploadUrl = `https://s3.us.archive.org/${bucket}/${destFile}`;
     console.log(`[pipe] ⬆️  ${uploadUrl}`);
 
@@ -141,10 +128,7 @@ app.post('/pipe', async (req, res) => {
     if (contentLength) headers['Content-Length'] = String(contentLength);
 
     await axios.put(uploadUrl, stream, {
-      headers,
-      maxBodyLength:    Infinity,
-      maxContentLength: Infinity,
-      timeout:          0,
+      headers, maxBodyLength: Infinity, maxContentLength: Infinity, timeout: 0,
     });
 
     const archiveUrl = `https://archive.org/download/${bucket}/${destFile}`;
