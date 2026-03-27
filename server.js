@@ -23,39 +23,47 @@ function saveKeys(keys) {
 
 app.get('/healthz', (req, res) => res.send('OK'));
 
+// ── שמירת מפתחות ──
 app.post('/save-keys', async (req, res) => {
-  const { archiveKey, archiveSecret, bucketName } = req.body;
+  const { archiveKey, archiveSecret, bucketName, googleApiKey } = req.body;
 
-  if (!archiveKey || !archiveSecret || !bucketName)
+  if (!archiveKey || !archiveSecret || !bucketName || !googleApiKey)
     return res.status(400).json({
       ok: false,
-      msg: '❌ כל השדות חובה — Access Key, Secret Key ושם Bucket'
+      msg: '❌ כל השדות חובה כולל Google API Key'
     });
 
+  // בדיקת מפתחות Archive.org
   try {
     await axios.get('https://s3.us.archive.org', {
       headers: { Authorization: `LOW ${archiveKey}:${archiveSecret}` },
       timeout: 8000,
     });
   } catch (err) {
-    const status = err.response?.status;
-    if (status === 403)
-      return res.status(400).json({ ok: false, msg: '❌ Access Key או Secret Key שגויים' });
-    if (status === 401)
-      return res.status(400).json({ ok: false, msg: '❌ המפתחות לא מורשים' });
-    if (!err.response)
-      return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת: ${err.message}` });
-    return res.status(400).json({ ok: false, msg: `❌ שגיאה ${status}: ${err.message}` });
+    const s = err.response?.status;
+    if (s === 403) return res.status(400).json({ ok: false, msg: '❌ מפתחות Archive.org שגויים' });
+    if (!err.response) return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת: ${err.message}` });
   }
 
-  saveKeys({ archiveKey, archiveSecret, bucketName });
-  res.json({ ok: true, msg: '✅ המפתחות נשמרו בהצלחה!' });
+  // בדיקת Google API Key
+  try {
+    await axios.get(`https://www.googleapis.com/drive/v3/files?pageSize=1&key=${googleApiKey}`, {
+      timeout: 8000,
+    });
+  } catch (err) {
+    const s = err.response?.status;
+    if (s === 400 || s === 403)
+      return res.status(400).json({ ok: false, msg: '❌ Google API Key שגוי — בדוק שהעתקת נכון ושה-Drive API מופעל' });
+  }
+
+  saveKeys({ archiveKey, archiveSecret, bucketName, googleApiKey });
+  res.json({ ok: true, msg: '✅ כל המפתחות נשמרו ונבדקו בהצלחה!' });
 });
 
 app.get('/keys-status', (req, res) => {
   const keys = loadKeys();
   res.json({
-    hasKeys: !!(keys.archiveKey && keys.archiveSecret && keys.bucketName),
+    hasKeys: !!(keys.archiveKey && keys.archiveSecret && keys.bucketName && keys.googleApiKey),
     bucketName: keys.bucketName || null,
   });
 });
@@ -68,50 +76,41 @@ function extractFileId(url) {
   return null;
 }
 
-async function getDownloadStream(fileId) {
-  const baseUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+// ── הורדה מגוגל דרייב דרך API רשמי ──
+async function getDownloadStream(fileId, googleApiKey) {
+  // שלב 1: שלוף מטא-דאטה של הקובץ
+  const metaRes = await axios.get(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,size,mimeType&key=${googleApiKey}`,
+    { timeout: 15000 }
+  );
+  const { name, size, mimeType } = metaRes.data;
+  console.log(`[pipe] 📄 קובץ: ${name} | גודל: ${size} | סוג: ${mimeType}`);
 
-  // בקשה ראשונה — לקבל confirm token מתוך ה-HTML
-  const res1 = await axios.get(baseUrl, {
-    maxRedirects: 5,
-    timeout: 30000,
-    headers: { 'User-Agent': 'Mozilla/5.0' },
-  });
-
-  let downloadUrl = baseUrl;
-
-  // חיפוש confirm token
-  const confirmMatch = res1.data.match(/confirm=([0-9A-Za-z_]+)/);
-  const uuidMatch    = res1.data.match(/uuid=([0-9A-Za-z_-]+)/);
-
-  if (confirmMatch) {
-    downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=${confirmMatch[1]}`;
-    if (uuidMatch) downloadUrl += `&uuid=${uuidMatch[1]}`;
-  }
-
-  // הורדה אמיתית עם stream
-  const res2 = await axios.get(downloadUrl, {
-    responseType: 'stream',
-    maxRedirects: 10,
-    timeout: 30000,
-    headers: {
-      'User-Agent': 'Mozilla/5.0',
-      'Cookie': (res1.headers['set-cookie'] || []).map(c => c.split(';')[0]).join('; '),
-    },
-  });
+  // שלב 2: הורד את הקובץ כ-stream
+  const dlRes = await axios.get(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${googleApiKey}`,
+    {
+      responseType: 'stream',
+      timeout: 0,
+      maxRedirects: 10,
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    }
+  );
 
   return {
-    stream:        res2.data,
-    contentType:   res2.headers['content-type'] || 'application/octet-stream',
-    contentLength: res2.headers['content-length'] || null,
+    stream:        dlRes.data,
+    contentType:   mimeType || dlRes.headers['content-type'] || 'application/octet-stream',
+    contentLength: size || dlRes.headers['content-length'] || null,
+    fileName:      name,
   };
 }
 
+// ── הצינור הראשי ──
 app.post('/pipe', async (req, res) => {
   const { driveUrl, fileName, bucketName: bucketOverride } = req.body;
   const keys = loadKeys();
 
-  if (!keys.archiveKey || !keys.archiveSecret)
+  if (!keys.archiveKey || !keys.archiveSecret || !keys.googleApiKey)
     return res.status(400).json({ ok: false, msg: '❌ מפתחות לא מוגדרים — פתח הגדרות (⚙)' });
 
   if (!driveUrl)
@@ -121,21 +120,26 @@ app.post('/pipe', async (req, res) => {
   if (!fileId)
     return res.status(400).json({ ok: false, msg: '❌ קישור לא תקין' });
 
-  const bucket   = bucketOverride || keys.bucketName;
-  const destFile = (fileName || `file_${fileId}`).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const bucket = bucketOverride || keys.bucketName;
 
   try {
-    console.log(`[pipe] ⬇️  id=${fileId}`);
-    const { stream, contentType, contentLength } = await getDownloadStream(fileId);
+    console.log(`[pipe] ⬇️  מתחיל הורדה | id=${fileId}`);
+    const { stream, contentType, contentLength, fileName: autoName } = await getDownloadStream(fileId, keys.googleApiKey);
+
+    const destFile = (fileName || autoName || `file_${fileId}`)
+      .replace(/[^a-zA-Z0-9._-]/g, '_');
 
     const uploadUrl = `https://s3.us.archive.org/${bucket}/${destFile}`;
+    console.log(`[pipe] ⬆️  מעלה ל-Archive.org | ${uploadUrl}`);
+
     const headers = {
       Authorization:                `LOW ${keys.archiveKey}:${keys.archiveSecret}`,
       'Content-Type':               contentType,
       'x-archive-auto-make-bucket': '1',
       'x-archive-meta-mediatype':   'movies',
+      'x-archive-meta-title':       destFile,
     };
-    if (contentLength) headers['Content-Length'] = contentLength;
+    if (contentLength) headers['Content-Length'] = String(contentLength);
 
     await axios.put(uploadUrl, stream, {
       headers,
@@ -145,12 +149,15 @@ app.post('/pipe', async (req, res) => {
     });
 
     const archiveUrl = `https://archive.org/download/${bucket}/${destFile}`;
-    console.log(`[pipe] ✅ ${archiveUrl}`);
-    res.json({ ok: true, msg: 'הועלה בהצלחה!', archiveUrl });
+    console.log(`[pipe] ✅ הועלה בהצלחה! ${archiveUrl}`);
+    res.json({ ok: true, msg: 'הועלה בהצלחה! 🎉', archiveUrl });
 
   } catch (err) {
-    console.error('[pipe] ❌', err.message);
-    res.status(500).json({ ok: false, msg: `❌ שגיאה: ${err.message}` });
+    console.error('[pipe] ❌', err.response?.data || err.message);
+    const msg = err.response?.status === 403
+      ? '❌ גוגל חסם את הגישה לקובץ — ודא שהקובץ ציבורי ושה-Drive API מופעל'
+      : `❌ שגיאה: ${err.message}`;
+    res.status(500).json({ ok: false, msg });
   }
 });
 
