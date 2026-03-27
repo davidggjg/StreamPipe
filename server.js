@@ -23,7 +23,6 @@ function saveKeys(keys) {
 
 app.get('/healthz', (req, res) => res.send('OK'));
 
-// ── שמירת מפתחות ──
 app.post('/save-keys', async (req, res) => {
   const { archiveKey, archiveSecret, bucketName, googleApiKey } = req.body;
 
@@ -41,19 +40,23 @@ app.post('/save-keys', async (req, res) => {
     });
   } catch (err) {
     const s = err.response?.status;
-    if (s === 403) return res.status(400).json({ ok: false, msg: '❌ מפתחות Archive.org שגויים' });
-    if (!err.response) return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת: ${err.message}` });
+    if (s === 403)
+      return res.status(400).json({ ok: false, msg: '❌ מפתחות Archive.org שגויים' });
+    if (!err.response)
+      return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת: ${err.message}` });
   }
 
   // בדיקת Google API Key
   try {
-    await axios.get(`https://www.googleapis.com/drive/v3/files?pageSize=1&key=${googleApiKey}`, {
-      timeout: 8000,
-    });
+    await axios.get(
+      `https://www.googleapis.com/drive/v3/about?fields=user&key=${googleApiKey}`,
+      { timeout: 8000 }
+    );
   } catch (err) {
     const s = err.response?.status;
-    if (s === 400 || s === 403)
+    if (s === 400 || s === 403 || s === 401)
       return res.status(400).json({ ok: false, msg: '❌ Google API Key שגוי — בדוק שהעתקת נכון ושה-Drive API מופעל' });
+    // שגיאות אחרות — המפתח בסדר, ממשיכים
   }
 
   saveKeys({ archiveKey, archiveSecret, bucketName, googleApiKey });
@@ -76,17 +79,14 @@ function extractFileId(url) {
   return null;
 }
 
-// ── הורדה מגוגל דרייב דרך API רשמי ──
 async function getDownloadStream(fileId, googleApiKey) {
-  // שלב 1: שלוף מטא-דאטה של הקובץ
   const metaRes = await axios.get(
     `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,size,mimeType&key=${googleApiKey}`,
     { timeout: 15000 }
   );
   const { name, size, mimeType } = metaRes.data;
-  console.log(`[pipe] 📄 קובץ: ${name} | גודל: ${size} | סוג: ${mimeType}`);
+  console.log(`[pipe] 📄 ${name} | ${size} bytes | ${mimeType}`);
 
-  // שלב 2: הורד את הקובץ כ-stream
   const dlRes = await axios.get(
     `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${googleApiKey}`,
     {
@@ -100,12 +100,11 @@ async function getDownloadStream(fileId, googleApiKey) {
   return {
     stream:        dlRes.data,
     contentType:   mimeType || dlRes.headers['content-type'] || 'application/octet-stream',
-    contentLength: size || dlRes.headers['content-length'] || null,
+    contentLength: size     || dlRes.headers['content-length'] || null,
     fileName:      name,
   };
 }
 
-// ── הצינור הראשי ──
 app.post('/pipe', async (req, res) => {
   const { driveUrl, fileName, bucketName: bucketOverride } = req.body;
   const keys = loadKeys();
@@ -123,14 +122,14 @@ app.post('/pipe', async (req, res) => {
   const bucket = bucketOverride || keys.bucketName;
 
   try {
-    console.log(`[pipe] ⬇️  מתחיל הורדה | id=${fileId}`);
+    console.log(`[pipe] ⬇️  id=${fileId}`);
     const { stream, contentType, contentLength, fileName: autoName } = await getDownloadStream(fileId, keys.googleApiKey);
 
     const destFile = (fileName || autoName || `file_${fileId}`)
       .replace(/[^a-zA-Z0-9._-]/g, '_');
 
     const uploadUrl = `https://s3.us.archive.org/${bucket}/${destFile}`;
-    console.log(`[pipe] ⬆️  מעלה ל-Archive.org | ${uploadUrl}`);
+    console.log(`[pipe] ⬆️  ${uploadUrl}`);
 
     const headers = {
       Authorization:                `LOW ${keys.archiveKey}:${keys.archiveSecret}`,
@@ -149,13 +148,13 @@ app.post('/pipe', async (req, res) => {
     });
 
     const archiveUrl = `https://archive.org/download/${bucket}/${destFile}`;
-    console.log(`[pipe] ✅ הועלה בהצלחה! ${archiveUrl}`);
+    console.log(`[pipe] ✅ ${archiveUrl}`);
     res.json({ ok: true, msg: 'הועלה בהצלחה! 🎉', archiveUrl });
 
   } catch (err) {
     console.error('[pipe] ❌', err.response?.data || err.message);
     const msg = err.response?.status === 403
-      ? '❌ גוגל חסם את הגישה לקובץ — ודא שהקובץ ציבורי ושה-Drive API מופעל'
+      ? '❌ גוגל חסם את הגישה — ודא שהקובץ ציבורי'
       : `❌ שגיאה: ${err.message}`;
     res.status(500).json({ ok: false, msg });
   }
