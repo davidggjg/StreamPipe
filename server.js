@@ -1,5 +1,7 @@
 const express = require('express');
 const axios   = require('axios');
+const https   = require('https');
+const http    = require('http');
 const app     = express();
 
 app.use(express.json());
@@ -28,7 +30,6 @@ app.post('/save-token', async (req, res) => {
   const { botToken } = req.body;
   if (!botToken)
     return res.status(400).json({ ok: false, msg: '❌ Token חסר' });
-
   try {
     const r = await axios.get(
       `https://api.telegram.org/bot${botToken}/getMe`,
@@ -46,9 +47,7 @@ app.post('/set-webhook', async (req, res) => {
   const keys = loadKeys();
   if (!keys.botToken)
     return res.status(400).json({ ok: false, msg: '❌ BOT_TOKEN חסר' });
-
   const webhookUrl = `https://${req.headers.host}/webhook`;
-
   try {
     await axios.get(
       `https://api.telegram.org/bot${keys.botToken}/setWebhook?url=${webhookUrl}`,
@@ -59,6 +58,36 @@ app.post('/set-webhook', async (req, res) => {
     res.status(500).json({ ok: false, msg: `❌ ${err.message}` });
   }
 });
+
+// ── stream טהור בלי זיכרון ──
+function pipeToArchive(dlUrl, uploadUrl, headers) {
+  return new Promise((resolve, reject) => {
+    const proto = dlUrl.startsWith('https') ? https : http;
+    
+    proto.get(dlUrl, (dlRes) => {
+      if (headers['Content-Length'] === undefined && dlRes.headers['content-length'])
+        headers['Content-Length'] = dlRes.headers['content-length'];
+
+      const uploadReq = https.request(uploadUrl, {
+        method:  'PUT',
+        headers: headers,
+      }, (uploadRes) => {
+        let body = '';
+        uploadRes.on('data', chunk => body += chunk);
+        uploadRes.on('end', () => {
+          if (uploadRes.statusCode >= 200 && uploadRes.statusCode < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Archive status ${uploadRes.statusCode}: ${body}`));
+          }
+        });
+      });
+
+      uploadReq.on('error', reject);
+      dlRes.pipe(uploadReq);
+    }).on('error', reject);
+  });
+}
 
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
@@ -78,10 +107,9 @@ app.post('/webhook', async (req, res) => {
   const fileName = (msg.document?.file_name || video.file_name || `video_${fileId}.mp4`)
     .replace(/[^a-zA-Z0-9._-]/g, '_');
 
-  const sizeMB     = (fileSize / 1024 / 1024).toFixed(1);
-  const estSeconds = Math.ceil(fileSize / (5 * 1024 * 1024));
-  const estMinutes = Math.ceil(estSeconds / 60);
-  const timeStr    = estMinutes < 2 ? `~${estSeconds} שניות` : `~${estMinutes} דקות`;
+  const sizeMB   = (fileSize / 1024 / 1024).toFixed(1);
+  const estSec   = Math.ceil(fileSize / (3 * 1024 * 1024));
+  const timeStr  = estSec < 60 ? `~${estSec} שניות` : `~${Math.ceil(estSec/60)} דקות`;
 
   try {
     await sendMessage(keys.botToken, chatId,
@@ -92,42 +120,29 @@ app.post('/webhook', async (req, res) => {
       `⏳ מעלה לארכיון...`
     );
 
-    const fileRes = await axios.get(
+    // שלוף file_path מטלגרם
+    const fileRes  = await axios.get(
       `https://api.telegram.org/bot${keys.botToken}/getFile?file_id=${fileId}`,
       { timeout: 15000 }
     );
     const filePath = fileRes.data.result.file_path;
     const dlUrl    = `https://api.telegram.org/file/bot${keys.botToken}/${filePath}`;
-
-    const stream = await axios.get(dlUrl, {
-      responseType: 'stream',
-      timeout: 0,
-    });
-
     const uploadUrl = `https://s3.us.archive.org/${keys.bucketName}/${fileName}`;
+
     const headers = {
-      Authorization:                `LOW ${keys.archiveKey}:${keys.archiveSecret}`,
-      'Content-Type':               stream.headers['content-type'] || 'video/mp4',
+      'Authorization':                `LOW ${keys.archiveKey}:${keys.archiveSecret}`,
+      'Content-Type':               'video/mp4',
       'x-archive-auto-make-bucket': '1',
       'x-archive-meta-mediatype':   'movies',
       'x-archive-meta-title':       fileName,
     };
-    if (stream.headers['content-length'])
-      headers['Content-Length'] = stream.headers['content-length'];
+    if (fileSize) headers['Content-Length'] = String(fileSize);
 
     const startTime = Date.now();
+    await pipeToArchive(dlUrl, uploadUrl, headers);
 
-    await axios.put(uploadUrl, stream.data, {
-      headers,
-      maxBodyLength:    Infinity,
-      maxContentLength: Infinity,
-      timeout:          0,
-    });
-
-    const tookSeconds = Math.ceil((Date.now() - startTime) / 1000);
-    const tookStr     = tookSeconds < 60
-      ? `${tookSeconds} שניות`
-      : `${Math.ceil(tookSeconds / 60)} דקות`;
+    const tookSec = Math.ceil((Date.now() - startTime) / 1000);
+    const tookStr = tookSec < 60 ? `${tookSec} שניות` : `${Math.ceil(tookSec/60)} דקות`;
 
     const archiveUrl = `https://archive.org/download/${keys.bucketName}/${fileName}`;
     await sendMessage(keys.botToken, chatId,
