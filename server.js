@@ -1,8 +1,8 @@
-const express = require('express');
-const axios   = require('axios');
-const fs      = require('fs');
-const path    = require('path');
-const app     = express();
+const express  = require('express');
+const axios    = require('axios');
+const fs       = require('fs');
+const path     = require('path');
+const app      = express();
 
 app.use(express.json());
 app.use(express.static('public'));
@@ -23,12 +23,13 @@ function saveKeys(keys) {
 
 app.get('/healthz', (req, res) => res.send('OK'));
 
+// ── שמירת מפתחות ──
 app.post('/save-keys', async (req, res) => {
-  const { archiveKey, archiveSecret, bucketName, googleApiKey } = req.body;
-  if (!archiveKey || !archiveSecret || !bucketName || !googleApiKey)
+  const { archiveKey, archiveSecret, bucketName, botToken } = req.body;
+  if (!archiveKey || !archiveSecret || !bucketName || !botToken)
     return res.status(400).json({ ok: false, msg: '❌ כל השדות חובה' });
 
-  // בדיקת Archive.org בלבד
+  // בדיקת Archive.org
   try {
     await axios.get('https://s3.us.archive.org', {
       headers: { Authorization: `LOW ${archiveKey}:${archiveSecret}` },
@@ -42,98 +43,118 @@ app.post('/save-keys', async (req, res) => {
       return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת: ${err.message}` });
   }
 
-  // Google API Key — שומרים בלי לבדוק
-  saveKeys({ archiveKey, archiveSecret, bucketName, googleApiKey });
+  // בדיקת Bot Token
+  try {
+    const r = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, { timeout: 8000 });
+    if (!r.data.ok) throw new Error('invalid token');
+  } catch (err) {
+    return res.status(400).json({ ok: false, msg: '❌ Bot Token שגוי — בדוק שהעתקת נכון' });
+  }
+
+  saveKeys({ archiveKey, archiveSecret, bucketName, botToken });
   res.json({ ok: true, msg: '✅ המפתחות נשמרו בהצלחה!' });
 });
 
 app.get('/keys-status', (req, res) => {
   const keys = loadKeys();
   res.json({
-    hasKeys: !!(keys.archiveKey && keys.archiveSecret && keys.bucketName && keys.googleApiKey),
+    hasKeys: !!(keys.archiveKey && keys.archiveSecret && keys.bucketName && keys.botToken),
     bucketName: keys.bucketName || null,
   });
 });
 
-function extractFileId(url) {
-  const m1 = url.match(/\/d\/([a-zA-Z0-9_-]{25,})/);
-  if (m1) return m1[1];
-  const m2 = url.match(/[?&]id=([a-zA-Z0-9_-]{25,})/);
-  if (m2) return m2[1];
-  return null;
-}
+// ── קבלת עדכונים מטלגרם (Webhook) ──
+app.post('/webhook', async (req, res) => {
+  res.sendStatus(200); // תמיד עונים מיד לטלגרם
 
-async function getDownloadStream(fileId, googleApiKey) {
-  const metaRes = await axios.get(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,size,mimeType&key=${googleApiKey}`,
-    { timeout: 15000 }
-  );
-  const { name, size, mimeType } = metaRes.data;
-  console.log(`[pipe] 📄 ${name} | ${size} bytes | ${mimeType}`);
-
-  const dlRes = await axios.get(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${googleApiKey}`,
-    { responseType: 'stream', timeout: 0, maxRedirects: 10, headers: { 'User-Agent': 'Mozilla/5.0' } }
-  );
-
-  return {
-    stream:        dlRes.data,
-    contentType:   mimeType || dlRes.headers['content-type'] || 'application/octet-stream',
-    contentLength: size     || dlRes.headers['content-length'] || null,
-    fileName:      name,
-  };
-}
-
-app.post('/pipe', async (req, res) => {
-  const { driveUrl, fileName, bucketName: bucketOverride } = req.body;
   const keys = loadKeys();
+  if (!keys.botToken || !keys.archiveKey) return;
 
-  if (!keys.archiveKey || !keys.archiveSecret)
-    return res.status(400).json({ ok: false, msg: '❌ מפתחות Archive.org חסרים — פתח הגדרות (⚙)' });
+  const msg = req.body.message || req.body.channel_post;
+  if (!msg) return;
 
-  if (!keys.googleApiKey)
-    return res.status(400).json({ ok: false, msg: '❌ Google API Key חסר — פתח הגדרות (⚙)' });
+  const chatId = msg.chat.id;
+  const video  = msg.video || msg.document;
+  if (!video) return;
 
-  if (!driveUrl)
-    return res.status(400).json({ ok: false, msg: '❌ הכנס קישור גוגל דרייב' });
-
-  const fileId = extractFileId(driveUrl);
-  if (!fileId)
-    return res.status(400).json({ ok: false, msg: '❌ קישור לא תקין' });
-
-  const bucket = bucketOverride || keys.bucketName;
+  const fileId   = video.file_id;
+  const fileName = (msg.document?.file_name || video.file_name || `video_${fileId}.mp4`)
+    .replace(/[^a-zA-Z0-9._-]/g, '_');
 
   try {
-    console.log(`[pipe] ⬇️  id=${fileId}`);
-    const { stream, contentType, contentLength, fileName: autoName } = await getDownloadStream(fileId, keys.googleApiKey);
+    // שלב 1: שלוף את ה-file_path מטלגרם
+    await sendMessage(keys.botToken, chatId, `⏳ מתחיל העלאה של ${fileName}...`);
 
-    const destFile = (fileName || autoName || `file_${fileId}`).replace(/[^a-zA-Z0-9._-]/g, '_');
-    const uploadUrl = `https://s3.us.archive.org/${bucket}/${destFile}`;
-    console.log(`[pipe] ⬆️  ${uploadUrl}`);
+    const fileRes = await axios.get(
+      `https://api.telegram.org/bot${keys.botToken}/getFile?file_id=${fileId}`,
+      { timeout: 15000 }
+    );
+    const filePath = fileRes.data.result.file_path;
+    const dlUrl    = `https://api.telegram.org/file/bot${keys.botToken}/${filePath}`;
+
+    // שלב 2: פתח stream מטלגרם
+    const stream = await axios.get(dlUrl, {
+      responseType: 'stream',
+      timeout: 0,
+    });
+
+    // שלב 3: העלה ישירות לארכיון
+    const bucket    = keys.bucketName;
+    const uploadUrl = `https://s3.us.archive.org/${bucket}/${fileName}`;
 
     const headers = {
       Authorization:                `LOW ${keys.archiveKey}:${keys.archiveSecret}`,
-      'Content-Type':               contentType,
+      'Content-Type':               stream.headers['content-type'] || 'video/mp4',
       'x-archive-auto-make-bucket': '1',
       'x-archive-meta-mediatype':   'movies',
-      'x-archive-meta-title':       destFile,
+      'x-archive-meta-title':       fileName,
     };
-    if (contentLength) headers['Content-Length'] = String(contentLength);
+    if (stream.headers['content-length'])
+      headers['Content-Length'] = stream.headers['content-length'];
 
-    await axios.put(uploadUrl, stream, {
-      headers, maxBodyLength: Infinity, maxContentLength: Infinity, timeout: 0,
+    await axios.put(uploadUrl, stream.data, {
+      headers,
+      maxBodyLength:    Infinity,
+      maxContentLength: Infinity,
+      timeout:          0,
     });
 
-    const archiveUrl = `https://archive.org/download/${bucket}/${destFile}`;
-    console.log(`[pipe] ✅ ${archiveUrl}`);
-    res.json({ ok: true, msg: 'הועלה בהצלחה! 🎉', archiveUrl });
+    const archiveUrl = `https://archive.org/download/${bucket}/${fileName}`;
+    await sendMessage(keys.botToken, chatId,
+      `✅ הועלה בהצלחה!\n\n🔗 ${archiveUrl}`
+    );
 
   } catch (err) {
-    console.error('[pipe] ❌', err.response?.data || err.message);
-    const msg = err.response?.status === 403
-      ? '❌ גוגל חסם את הגישה — ודא שהקובץ ציבורי ושה-API Key תקין'
-      : `❌ שגיאה: ${err.message}`;
-    res.status(500).json({ ok: false, msg });
+    console.error('[webhook] ❌', err.message);
+    await sendMessage(keys.botToken, chatId, `❌ שגיאה: ${err.message}`);
+  }
+});
+
+async function sendMessage(token, chatId, text) {
+  try {
+    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
+      chat_id: chatId, text,
+    });
+  } catch (e) {}
+}
+
+// ── הגדרת Webhook אוטומטית ──
+app.post('/set-webhook', async (req, res) => {
+  const keys = loadKeys();
+  if (!keys.botToken)
+    return res.status(400).json({ ok: false, msg: '❌ אין Bot Token' });
+
+  const host       = req.headers.host;
+  const webhookUrl = `https://${host}/webhook`;
+
+  try {
+    await axios.get(
+      `https://api.telegram.org/bot${keys.botToken}/setWebhook?url=${webhookUrl}`,
+      { timeout: 8000 }
+    );
+    res.json({ ok: true, msg: `✅ Webhook הוגדר ל-${webhookUrl}` });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: `❌ ${err.message}` });
   }
 });
 
