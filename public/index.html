@@ -40,16 +40,13 @@
   .instruction .icon{font-size:3rem;margin-bottom:12px}
   .instruction h2{font-size:1.3rem;font-weight:700;margin-bottom:8px}
   .instruction p{color:var(--muted);font-size:0.88rem;line-height:1.6}
-  .bot-name{color:var(--accent);font-family:'Space Mono',monospace;font-size:0.9rem;
-    background:rgba(0,229,255,0.08);border:1px solid rgba(0,229,255,0.2);
-    border-radius:8px;padding:10px 16px;margin:16px 0;display:block;text-align:center}
   .btn-activate{width:100%;padding:14px;background:linear-gradient(135deg,var(--accent),#0097a7);
     color:#000;font-family:'Heebo',sans-serif;font-size:0.97rem;font-weight:700;
-    border:none;border-radius:10px;cursor:pointer;transition:all 0.2s;position:relative;overflow:hidden}
+    border:none;border-radius:10px;cursor:pointer;transition:all 0.2s;margin-top:16px}
   .btn-activate:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,229,255,0.25)}
   .btn-activate:disabled{opacity:0.45;cursor:not-allowed}
   #activate-result{margin-top:12px;padding:11px 14px;border-radius:8px;
-    font-size:0.83rem;line-height:1.5;border:1px solid;display:none;text-align:center}
+    font-size:0.83rem;border:1px solid;display:none;text-align:center}
   #activate-result.ok{background:rgba(0,230,118,0.05);border-color:rgba(0,230,118,0.25);color:var(--green)}
   #activate-result.err{background:rgba(255,23,68,0.05);border-color:rgba(255,23,68,0.25);color:var(--red)}
   .steps{margin-top:24px;padding:16px;background:rgba(255,255,255,0.015);
@@ -63,7 +60,7 @@
     backdrop-filter:blur(6px);z-index:100;align-items:center;justify-content:center}
   .overlay.open{display:flex}
   .modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;
-    padding:28px;width:100%;max-width:440px;margin:16px;animation:slideUp 0.2s ease}
+    padding:28px;width:100%;max-width:400px;margin:16px;animation:slideUp 0.2s ease}
   @keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
   .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
   .modal-title{font-size:1rem;font-weight:700}
@@ -79,16 +76,12 @@
     outline:none;transition:all 0.2s;direction:ltr;text-align:left}
   input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,229,255,0.08)}
   input::placeholder{color:var(--muted);opacity:0.45}
-  .divider{border:none;border-top:1px solid var(--border);margin:16px 0}
-  .section-label{font-size:0.68rem;font-weight:600;letter-spacing:1.5px;
-    text-transform:uppercase;color:var(--muted);margin-bottom:12px}
   .btn-save{width:100%;padding:13px;background:var(--accent2);color:#fff;
     font-family:'Heebo',sans-serif;font-size:0.95rem;font-weight:600;
     border:none;border-radius:8px;cursor:pointer;margin-top:6px;transition:all 0.2s}
   .btn-save:hover{background:#6d28d9}
-  .btn-save:disabled{opacity:0.45;cursor:not-allowed}
   .key-result{margin-top:12px;padding:11px 14px;border-radius:8px;
-    font-size:0.83rem;line-height:1.5;border:1px solid;display:none}
+    font-size:0.83rem;border:1px solid;display:none}
   .key-result.ok{background:rgba(0,230,118,0.05);border-color:rgba(0,230,118,0.25);color:var(--green)}
   .key-result.err{background:rgba(255,23,68,0.05);border-color:rgba(255,23,68,0.25);color:var(--red)}
 </style>
@@ -114,7 +107,6 @@
       <div class="icon">🤖</div>
       <h2>הבוט מוכן לעבודה</h2>
       <p>שלח קובץ וידאו לבוט בטלגרם<br>והוא יעלה אותו לארכיון אוטומטית</p>
-      <span class="bot-name" id="bot-name">טוען שם בוט...</span>
     </div>
 
     <button class="btn-activate" onclick="activateBot()">⚡ הפעל בוט / עדכן חיבור</button>
@@ -122,86 +114,80 @@
 
     <div class="steps">
       <h3>איך זה עובד</h3>
-      <div class="step">
-        <div class="step-num">1</div>
-        <span>לחץ "הפעל בוט" למטה</span>
-      </div>
-      <div class="step">
-        <div class="step-num">2</div>
-        <span>פתח את הבוט בטלגרם</span>
-      </div>
-      <div class="step">
-        <div class="step-num">3</div>
-        <span>שלח קובץ וידאו לבוט</span>
-      </div>
-      <div class="step">
-        <div class="step-num">4</div>
-        <span>הבוט יחזיר קישור לארכיון ✅</span>
-      </div>
+      <div class="step"><div class="step-num">1</div><span>לחץ "הפעל בוט" למטה</span></div>
+      <div class="step"><div class="step-num">2</div><span>פתח את הבוט בטלגרם</span></div>
+      <div class="step"><div class="step-num">3</div><span>שלח קובץ וידאו לבוט</span></div>
+      <div class="step"><div class="step-num">4</div><span>הבוט יחזיר קישור לארכיון ✅</span></div>
     </div>
   </div>
 </main>
 
+<!-- מודל הגדרות — Bot Token בלבד -->
 <div class="overlay" id="overlay" onclick="handleOverlay(event)">
   <div class="modal">
     <div class="modal-header">
-      <div class="modal-title">⚙️ הגדרות</div>
+      <div class="modal-title">⚙️ הגדרות בוט</div>
       <button class="close-btn" onclick="closeSettings()">✕</button>
     </div>
 
-    <div class="section-label">🏛️ Archive.org</div>
     <div class="field">
-      <label>Access Key</label>
-      <input type="password" id="archiveKey" placeholder="••••••••••••••••" />
-    </div>
-    <div class="field">
-      <label>Secret Key</label>
-      <input type="password" id="archiveSecret" placeholder="••••••••••••••••" />
-    </div>
-    <div class="field">
-      <label>שם Bucket</label>
-      <input type="text" id="bucketName" placeholder="david-movies" />
-    </div>
-
-    <hr class="divider">
-
-    <div class="section-label">🤖 טלגרם</div>
-    <div class="field">
-      <label>Bot Token</label>
+      <label>🤖 Telegram Bot Token</label>
       <input type="password" id="botToken" placeholder="123456:ABC-DEF..." />
     </div>
 
-    <button class="btn-save" id="saveBtn" onclick="saveKeys()">💾 שמור ובדוק</button>
+    <button class="btn-save" onclick="saveToken()">💾 שמור ובדוק</button>
     <div id="key-result" class="key-result"></div>
   </div>
 </div>
 
 <script>
-  async function checkKeysStatus() {
+  async function checkStatus() {
     try {
       const res  = await fetch('/keys-status');
       const data = await res.json();
       const badge = document.getElementById('keys-badge');
       if (data.hasKeys) {
         badge.className = 'badge ok';
-        badge.textContent = `✓ ${data.bucketName}`;
+        badge.textContent = '✓ מוכן';
       } else {
         badge.className = 'badge err';
-        badge.textContent = '⚠ הגדרות חסרות';
+        badge.textContent = '⚠ הגדר טוקן';
       }
     } catch(e) {}
   }
 
-  async function loadBotName() {
+  function openSettings()  { document.getElementById('overlay').classList.add('open'); }
+  function closeSettings() { document.getElementById('overlay').classList.remove('open'); }
+  function handleOverlay(e) { if (e.target === document.getElementById('overlay')) closeSettings(); }
+
+  async function saveToken() {
+    const token  = document.getElementById('botToken').value.trim();
+    const result = document.getElementById('key-result');
+    if (!token) {
+      result.style.display = 'block';
+      result.className = 'key-result err';
+      result.textContent = '❌ הכנס Bot Token';
+      return;
+    }
+
+    result.style.display = 'block';
+    result.className = 'key-result';
+    result.textContent = '⏳ בודק...';
+
     try {
-      const res  = await fetch('/keys-status');
+      const res  = await fetch('/save-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botToken: token }),
+      });
       const data = await res.json();
-      if (data.botName) {
-        document.getElementById('bot-name').textContent = '@' + data.botName;
-      } else {
-        document.getElementById('bot-name').textContent = 'הגדר מפתחות בגלגל השיניים ⚙';
-      }
-    } catch(e) {}
+      result.className = 'key-result ' + (data.ok ? 'ok' : 'err');
+      result.textContent = data.msg;
+      if (data.ok) { checkStatus(); setTimeout(closeSettings, 1500); }
+    } catch(e) {
+      result.className = 'key-result err';
+      result.textContent = '❌ שגיאת רשת';
+    }
   }
 
   async function activateBot() {
@@ -209,7 +195,6 @@
     const result = document.getElementById('activate-result');
     btn.disabled = true;
     btn.textContent = '⏳ מפעיל...';
-    result.style.display = 'none';
 
     try {
       const res  = await fetch('/set-webhook', { method: 'POST' });
@@ -220,52 +205,14 @@
     } catch(e) {
       result.style.display = 'block';
       result.className = 'err';
-      result.textContent = '❌ שגיאת רשת: ' + e.message;
+      result.textContent = '❌ שגיאת רשת';
     } finally {
       btn.disabled = false;
       btn.textContent = '⚡ הפעל בוט / עדכן חיבור';
     }
   }
 
-  function openSettings()  { document.getElementById('overlay').classList.add('open'); }
-  function closeSettings() { document.getElementById('overlay').classList.remove('open'); }
-  function handleOverlay(e) { if (e.target === document.getElementById('overlay')) closeSettings(); }
-
-  async function saveKeys() {
-    const btn    = document.getElementById('saveBtn');
-    const result = document.getElementById('key-result');
-    btn.disabled = true;
-    btn.textContent = '⏳ בודק...';
-    result.style.display = 'none';
-
-    try {
-      const res  = await fetch('/save-keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          archiveKey:    document.getElementById('archiveKey').value.trim(),
-          archiveSecret: document.getElementById('archiveSecret').value.trim(),
-          bucketName:    document.getElementById('bucketName').value.trim(),
-          botToken:      document.getElementById('botToken').value.trim(),
-        }),
-      });
-      const data = await res.json();
-      result.style.display = 'block';
-      result.className = 'key-result ' + (data.ok ? 'ok' : 'err');
-      result.textContent = data.msg;
-      if (data.ok) { checkKeysStatus(); loadBotName(); setTimeout(closeSettings, 1500); }
-    } catch(e) {
-      result.style.display = 'block';
-      result.className = 'key-result err';
-      result.textContent = '❌ שגיאת רשת: ' + e.message;
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '💾 שמור ובדוק';
-    }
-  }
-
-  checkKeysStatus();
-  loadBotName();
+  checkStatus();
 </script>
 </body>
 </html>
