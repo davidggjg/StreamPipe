@@ -1,59 +1,21 @@
-const express  = require('express');
-const axios    = require('axios');
-const fs       = require('fs');
-const path     = require('path');
-const app      = express();
+const express = require('express');
+const axios   = require('axios');
+const app     = express();
 
 app.use(express.json());
 app.use(express.static('public'));
 
-const KEYS_FILE = path.join(__dirname, 'keys.json');
-
+// ── מפתחות מ-Environment Variables בלבד ──
 function loadKeys() {
-  try {
-    if (fs.existsSync(KEYS_FILE))
-      return JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
-  } catch (e) {}
-  return {};
-}
-
-function saveKeys(keys) {
-  fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
+  return {
+    archiveKey:    process.env.ARCHIVE_KEY,
+    archiveSecret: process.env.ARCHIVE_SECRET,
+    bucketName:    process.env.ARCHIVE_BUCKET,
+    botToken:      process.env.BOT_TOKEN,
+  };
 }
 
 app.get('/healthz', (req, res) => res.send('OK'));
-
-// ── שמירת מפתחות ──
-app.post('/save-keys', async (req, res) => {
-  const { archiveKey, archiveSecret, bucketName, botToken } = req.body;
-  if (!archiveKey || !archiveSecret || !bucketName || !botToken)
-    return res.status(400).json({ ok: false, msg: '❌ כל השדות חובה' });
-
-  // בדיקת Archive.org
-  try {
-    await axios.get('https://s3.us.archive.org', {
-      headers: { Authorization: `LOW ${archiveKey}:${archiveSecret}` },
-      timeout: 8000,
-    });
-  } catch (err) {
-    const s = err.response?.status;
-    if (s === 403)
-      return res.status(400).json({ ok: false, msg: '❌ מפתחות Archive.org שגויים' });
-    if (!err.response)
-      return res.status(400).json({ ok: false, msg: `❌ שגיאת רשת: ${err.message}` });
-  }
-
-  // בדיקת Bot Token
-  try {
-    const r = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, { timeout: 8000 });
-    if (!r.data.ok) throw new Error('invalid token');
-  } catch (err) {
-    return res.status(400).json({ ok: false, msg: '❌ Bot Token שגוי — בדוק שהעתקת נכון' });
-  }
-
-  saveKeys({ archiveKey, archiveSecret, bucketName, botToken });
-  res.json({ ok: true, msg: '✅ המפתחות נשמרו בהצלחה!' });
-});
 
 app.get('/keys-status', (req, res) => {
   const keys = loadKeys();
@@ -63,9 +25,9 @@ app.get('/keys-status', (req, res) => {
   });
 });
 
-// ── קבלת עדכונים מטלגרם (Webhook) ──
+// ── Webhook מטלגרם ──
 app.post('/webhook', async (req, res) => {
-  res.sendStatus(200); // תמיד עונים מיד לטלגרם
+  res.sendStatus(200);
 
   const keys = loadKeys();
   if (!keys.botToken || !keys.archiveKey) return;
@@ -82,7 +44,6 @@ app.post('/webhook', async (req, res) => {
     .replace(/[^a-zA-Z0-9._-]/g, '_');
 
   try {
-    // שלב 1: שלוף את ה-file_path מטלגרם
     await sendMessage(keys.botToken, chatId, `⏳ מתחיל העלאה של ${fileName}...`);
 
     const fileRes = await axios.get(
@@ -92,16 +53,12 @@ app.post('/webhook', async (req, res) => {
     const filePath = fileRes.data.result.file_path;
     const dlUrl    = `https://api.telegram.org/file/bot${keys.botToken}/${filePath}`;
 
-    // שלב 2: פתח stream מטלגרם
     const stream = await axios.get(dlUrl, {
       responseType: 'stream',
       timeout: 0,
     });
 
-    // שלב 3: העלה ישירות לארכיון
-    const bucket    = keys.bucketName;
-    const uploadUrl = `https://s3.us.archive.org/${bucket}/${fileName}`;
-
+    const uploadUrl = `https://s3.us.archive.org/${keys.bucketName}/${fileName}`;
     const headers = {
       Authorization:                `LOW ${keys.archiveKey}:${keys.archiveSecret}`,
       'Content-Type':               stream.headers['content-type'] || 'video/mp4',
@@ -119,10 +76,8 @@ app.post('/webhook', async (req, res) => {
       timeout:          0,
     });
 
-    const archiveUrl = `https://archive.org/download/${bucket}/${fileName}`;
-    await sendMessage(keys.botToken, chatId,
-      `✅ הועלה בהצלחה!\n\n🔗 ${archiveUrl}`
-    );
+    const archiveUrl = `https://archive.org/download/${keys.bucketName}/${fileName}`;
+    await sendMessage(keys.botToken, chatId, `✅ הועלה בהצלחה!\n\n🔗 ${archiveUrl}`);
 
   } catch (err) {
     console.error('[webhook] ❌', err.message);
@@ -130,19 +85,11 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-async function sendMessage(token, chatId, text) {
-  try {
-    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
-      chat_id: chatId, text,
-    });
-  } catch (e) {}
-}
-
-// ── הגדרת Webhook אוטומטית ──
+// ── הגדרת Webhook ──
 app.post('/set-webhook', async (req, res) => {
   const keys = loadKeys();
   if (!keys.botToken)
-    return res.status(400).json({ ok: false, msg: '❌ אין Bot Token' });
+    return res.status(400).json({ ok: false, msg: '❌ BOT_TOKEN חסר' });
 
   const host       = req.headers.host;
   const webhookUrl = `https://${host}/webhook`;
@@ -152,11 +99,19 @@ app.post('/set-webhook', async (req, res) => {
       `https://api.telegram.org/bot${keys.botToken}/setWebhook?url=${webhookUrl}`,
       { timeout: 8000 }
     );
-    res.json({ ok: true, msg: `✅ Webhook הוגדר ל-${webhookUrl}` });
+    res.json({ ok: true, msg: `✅ Webhook הוגדר!` });
   } catch (err) {
     res.status(500).json({ ok: false, msg: `❌ ${err.message}` });
   }
 });
+
+async function sendMessage(token, chatId, text) {
+  try {
+    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
+      chat_id: chatId, text,
+    });
+  } catch(e) {}
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚰 StreamPipe פועל על פורט ${PORT}`));
