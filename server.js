@@ -5,7 +5,6 @@ const app     = express();
 app.use(express.json());
 app.use(express.static('public'));
 
-// ── מפתחות מ-Environment Variables בלבד ──
 function loadKeys() {
   return {
     archiveKey:    process.env.ARCHIVE_KEY,
@@ -20,12 +19,11 @@ app.get('/healthz', (req, res) => res.send('OK'));
 app.get('/keys-status', (req, res) => {
   const keys = loadKeys();
   res.json({
-    hasKeys: !!(keys.archiveKey && keys.archiveSecret && keys.bucketName && keys.botToken),
+    hasKeys:    !!(keys.archiveKey && keys.archiveSecret && keys.bucketName && keys.botToken),
     bucketName: keys.bucketName || null,
   });
 });
 
-// ── Webhook מטלגרם ──
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 
@@ -85,21 +83,19 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// ── הגדרת Webhook ──
 app.post('/set-webhook', async (req, res) => {
   const keys = loadKeys();
   if (!keys.botToken)
     return res.status(400).json({ ok: false, msg: '❌ BOT_TOKEN חסר' });
 
-  const host       = req.headers.host;
-  const webhookUrl = `https://${host}/webhook`;
+  const webhookUrl = `https://${req.headers.host}/webhook`;
 
   try {
     await axios.get(
       `https://api.telegram.org/bot${keys.botToken}/setWebhook?url=${webhookUrl}`,
       { timeout: 8000 }
     );
-    res.json({ ok: true, msg: `✅ Webhook הוגדר!` });
+    res.json({ ok: true, msg: '✅ הבוט הופעל בהצלחה!' });
   } catch (err) {
     res.status(500).json({ ok: false, msg: `❌ ${err.message}` });
   }
