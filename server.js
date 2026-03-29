@@ -1,29 +1,96 @@
+const https = require('https');
 const express = require('express');
-const axios   = require('axios');
-const https   = require('https');
-const app     = express();
-app.use(express.static('public'));
 
-function getKeys() {
-  return {
-    archiveKey:    process.env.ARCHIVE_KEY,
-    archiveSecret: process.env.ARCHIVE_SECRET,
-    bucketName:    process.env.ARCHIVE_BUCKET,
-    botToken:      process.env.BOT_TOKEN,
-  };
+// -------------------------------
+// 1. קריאת משתני סביבה
+// -------------------------------
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const ARCHIVE_KEY = process.env.ARCHIVE_KEY;
+const ARCHIVE_SECRET = process.env.ARCHIVE_SECRET;
+const ARCHIVE_BUCKET = (process.env.ARCHIVE_BUCKET || 'mybucket').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+
+if (!BOT_TOKEN || !ARCHIVE_KEY || !ARCHIVE_SECRET) {
+  console.error('❌ חסרים משתני סביבה: BOT_TOKEN, ARCHIVE_KEY, ARCHIVE_SECRET');
+  process.exit(1);
 }
 
-function pipeToArchive(dlUrl, uploadUrl, headers) {
+// -------------------------------
+// 2. מחק Webhook
+// -------------------------------
+async function deleteWebhook() {
   return new Promise((resolve, reject) => {
-    https.get(dlUrl, (dlRes) => {
-      if (!headers['Content-Length'] && dlRes.headers['content-length'])
+    const url = `${TELEGRAM_API}/deleteWebhook`;
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        const ok = JSON.parse(data).ok;
+        ok ? resolve() : reject(new Error('deleteWebhook failed'));
+      });
+    }).on('error', reject);
+  });
+}
+
+// -------------------------------
+// 3. שליחת הודעה
+// -------------------------------
+function sendMessage(chatId, text) {
+  const data = JSON.stringify({ chat_id: chatId, text });
+  const options = {
+    hostname: 'api.telegram.org',
+    path: `/bot${BOT_TOKEN}/sendMessage`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+  };
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => resolve(JSON.parse(body)));
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+// -------------------------------
+// 4. קבלת file_path
+// -------------------------------
+async function getFilePath(fileId) {
+  return new Promise((resolve, reject) => {
+    const url = `${TELEGRAM_API}/getFile?file_id=${fileId}`;
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        const json = JSON.parse(data);
+        if (!json.ok) return reject(new Error('getFile failed'));
+        resolve(json.result.file_path);
+      });
+    }).on('error', reject);
+  });
+}
+
+// -------------------------------
+// 5. Stream ישיר
+// -------------------------------
+function pipeToArchive(downloadUrl, uploadUrl, headers) {
+  return new Promise((resolve, reject) => {
+    https.get(downloadUrl, (dlRes) => {
+      if (!headers['Content-Length'] && dlRes.headers['content-length']) {
         headers['Content-Length'] = dlRes.headers['content-length'];
-      const req = https.request(uploadUrl, { method: 'PUT', headers }, (res) => {
+      }
+      const req = https.request(uploadUrl, { method: 'PUT', headers }, (archiveRes) => {
         let body = '';
-        res.on('data', c => body += c);
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) resolve();
-          else reject(new Error(`Archive ${res.statusCode}: ${body.slice(0, 200)}`));
+        archiveRes.on('data', c => body += c);
+        archiveRes.on('end', () => {
+          if (archiveRes.statusCode >= 200 && archiveRes.statusCode < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Archive ${archiveRes.statusCode}: ${body}`));
+          }
         });
       });
       req.on('error', reject);
@@ -32,145 +99,79 @@ function pipeToArchive(dlUrl, uploadUrl, headers) {
   });
 }
 
-async function sendMessage(token, chatId, text) {
-  try {
-    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
-      chat_id: chatId, text,
-    });
-  } catch(e) {}
-}
+// -------------------------------
+// 6. טיפול בהודעה
+// -------------------------------
+async function handleMessage(msg) {
+  const chatId = msg.chat.id;
+  const video = msg.video || msg.document;
+  if (!video) return;
 
-async function handleVideo(token, chatId, video, document) {
-  const k = getKeys();
-  const file = video || document;
-  if (!file) return;
+  const fileName = video.file_name || `video_${Date.now()}.mp4`;
+  const safeFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const uploadUrl = `https://s3.us.archive.org/${ARCHIVE_BUCKET}/${safeFileName}`;
 
-  const mime = file.mime_type || '';
-  if (document && !mime.startsWith('video/')) {
-    await sendMessage(token, chatId, '❌ אנא שלח קובץ וידאו בלבד');
-    return;
-  }
-
-  const fileId   = file.file_id;
-  const fileSize = file.file_size || 0;
-  const fileName = (document?.file_name || `video_${fileId}.mp4`)
-    .replace(/[^a-zA-Z0-9._-]/g, '_');
-
-  const sizeMB  = (fileSize / 1024 / 1024).toFixed(1);
-  const estSec  = Math.ceil(fileSize / (3 * 1024 * 1024));
-  const timeStr = estSec < 60 ? `~${estSec} שניות` : `~${Math.ceil(estSec/60)} דקות`;
-
-  await sendMessage(token, chatId,
-    `📥 קיבלתי!\n\n📄 ${fileName}\n📦 ${sizeMB} MB\n⏱ זמן משוער: ${timeStr}\n\n⏳ מעלה לארכיון...`
-  );
+  await sendMessage(chatId, `📥 קיבלתי את "${fileName}"\n🚀 מתחיל העלאה ל‑Archive.org...`);
 
   try {
-    const fileRes  = await axios.get(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`, { timeout: 15000 });
-    const filePath = fileRes.data.result.file_path;
-    const dlUrl    = `https://api.telegram.org/file/bot${token}/${filePath}`;
-    const uploadUrl = `https://s3.us.archive.org/${k.bucketName}/${fileName}`;
-
+    const filePath = await getFilePath(video.file_id);
+    const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
     const headers = {
-      'Authorization':                `LOW ${k.archiveKey}:${k.archiveSecret}`,
-      'Content-Type':               mime || 'video/mp4',
+      'Authorization': `LOW ${ARCHIVE_KEY}:${ARCHIVE_SECRET}`,
       'x-archive-auto-make-bucket': '1',
-      'x-archive-meta-mediatype':   'movies',
-      'x-archive-meta-title':       fileName,
+      'x-archive-meta-mediatype': 'movies'
     };
-    if (fileSize) headers['Content-Length'] = String(fileSize);
-
-    const start = Date.now();
-    await pipeToArchive(dlUrl, uploadUrl, headers);
-    const took = Math.ceil((Date.now() - start) / 1000);
-    const tookStr = took < 60 ? `${took} שניות` : `${Math.ceil(took/60)} דקות`;
-
-    const archiveUrl = `https://archive.org/download/${k.bucketName}/${fileName}`;
-    await sendMessage(token, chatId, `✅ הועלה בהצלחה!\n\n⏱ לקח: ${tookStr}\n\n🔗 ${archiveUrl}`);
-
+    await pipeToArchive(downloadUrl, uploadUrl, headers);
+    const resultUrl = `https://archive.org/download/${ARCHIVE_BUCKET}/${safeFileName}`;
+    await sendMessage(chatId, `✅ הסרט הועלה בהצלחה!\n🔗 ${resultUrl}`);
   } catch (err) {
-    console.error('[upload] ❌', err.message);
-    await sendMessage(token, chatId, `❌ שגיאה: ${err.message}`);
+    console.error('שגיאה:', err.message);
+    await sendMessage(chatId, `❌ ההעלאה נכשלה:\n${err.message}`);
   }
 }
 
-// ── Long Polling ──
-let offset = 0;
-let polling = false;
-
-async function startPolling(token) {
-  if (polling) return;
-  polling = true;
-  console.log('🤖 Long Polling מתחיל...');
-
-  // מחק webhook קודם
+// -------------------------------
+// 7. Long Polling
+// -------------------------------
+let lastUpdateId = 0;
+async function pollUpdates() {
   try {
-    await axios.get(`https://api.telegram.org/bot${token}/deleteWebhook`, { timeout: 8000 });
-  } catch(e) {}
-
-  while (polling) {
-    try {
-      const res = await axios.get(`https://api.telegram.org/bot${token}/getUpdates`, {
-        params: { offset, timeout: 30, allowed_updates: ['message'] },
-        timeout: 35000,
+    const url = `${TELEGRAM_API}/getUpdates?timeout=30&offset=${lastUpdateId + 1}`;
+    const response = await new Promise((resolve, reject) => {
+      https.get(url, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => resolve(JSON.parse(data)));
+        res.on('error', reject);
       });
-
-      const updates = res.data.result || [];
-      for (const update of updates) {
-        offset = update.update_id + 1;
-        const msg = update.message;
-        if (!msg) continue;
-
-        const chatId = msg.chat.id;
-
-        if (msg.text === '/start') {
-          await sendMessage(token, chatId, '👋 שלום!\n\nשלח לי קובץ וידאו ואני אעלה אותו לארכיון 🚀');
-          continue;
-        }
-
-        if (msg.video || msg.document) {
-          handleVideo(token, chatId, msg.video, msg.document);
-        }
+    });
+    if (response.ok && response.result.length > 0) {
+      for (const update of response.result) {
+        lastUpdateId = update.update_id;
+        if (update.message) await handleMessage(update.message);
       }
-    } catch(e) {
-      if (e.code !== 'ECONNABORTED') console.error('[polling]', e.message);
-      await new Promise(r => setTimeout(r, 3000));
     }
+  } catch (err) {
+    console.error('Polling error:', err.message);
+  } finally {
+    setTimeout(pollUpdates, 1000);
   }
 }
 
-// ── Routes ──
-app.get('/healthz', (req, res) => res.send('OK'));
-
-app.get('/keys-status', (req, res) => {
-  const k = getKeys();
-  res.json({
-    hasKeys:    !!(k.archiveKey && k.archiveSecret && k.bucketName && k.botToken),
-    bucketName: k.bucketName || null,
-  });
-});
-
-app.post('/save-token', async (req, res) => {
-  const { botToken } = req.body;
-  if (!botToken)
-    return res.status(400).json({ ok: false, msg: '❌ Token חסר' });
-  try {
-    const r = await axios.get(`https://api.telegram.org/bot${botToken}/getMe`, { timeout: 8000 });
-    if (!r.data.ok) throw new Error('invalid');
-    process.env.BOT_TOKEN = botToken;
-    res.json({ ok: true, msg: `✅ בוט מחובר: @${r.data.result.username}` });
-  } catch(e) {
-    res.status(400).json({ ok: false, msg: '❌ Token שגוי' });
-  }
-});
-
-// ── הפעלה ──
+// -------------------------------
+// 8. Express server
+// -------------------------------
+const app = express();
+app.get('/health', (req, res) => res.send('OK'));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  console.log(`🚰 StreamPipe פועל על פורט ${PORT}`);
-  const k = getKeys();
-  if (k.botToken) {
-    startPolling(k.botToken);
-  } else {
-    console.log('⚠️ BOT_TOKEN חסר — Long Polling לא פעיל');
-  }
-});
+app.listen(PORT, () => console.log(`✅ Health check server on port ${PORT}`));
+
+// -------------------------------
+// 9. אתחול
+// -------------------------------
+(async () => {
+  console.log('🧹 מוחק webhook...');
+  await deleteWebhook();
+  console.log('✅ Webhook נמחק, מתחיל Long Polling');
+  pollUpdates();
+})();
