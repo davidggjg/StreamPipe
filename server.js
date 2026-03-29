@@ -24,6 +24,45 @@ app.get('/keys-status', (req, res) => {
   });
 });
 
+// ── שמירת Bot Token ──
+app.post('/save-token', async (req, res) => {
+  const { botToken } = req.body;
+  if (!botToken)
+    return res.status(400).json({ ok: false, msg: '❌ Token חסר' });
+
+  try {
+    const r = await axios.get(
+      `https://api.telegram.org/bot${botToken}/getMe`,
+      { timeout: 8000 }
+    );
+    if (!r.data.ok) throw new Error('invalid');
+    process.env.BOT_TOKEN = botToken;
+    res.json({ ok: true, msg: `✅ בוט מחובר: @${r.data.result.username}` });
+  } catch(e) {
+    res.status(400).json({ ok: false, msg: '❌ Token שגוי' });
+  }
+});
+
+// ── הגדרת Webhook ──
+app.post('/set-webhook', async (req, res) => {
+  const keys = loadKeys();
+  if (!keys.botToken)
+    return res.status(400).json({ ok: false, msg: '❌ BOT_TOKEN חסר' });
+
+  const webhookUrl = `https://${req.headers.host}/webhook`;
+
+  try {
+    await axios.get(
+      `https://api.telegram.org/bot${keys.botToken}/setWebhook?url=${webhookUrl}`,
+      { timeout: 8000 }
+    );
+    res.json({ ok: true, msg: '✅ הבוט הופעל בהצלחה!' });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: `❌ ${err.message}` });
+  }
+});
+
+// ── Webhook מטלגרם ──
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 
@@ -80,24 +119,6 @@ app.post('/webhook', async (req, res) => {
   } catch (err) {
     console.error('[webhook] ❌', err.message);
     await sendMessage(keys.botToken, chatId, `❌ שגיאה: ${err.message}`);
-  }
-});
-
-app.post('/set-webhook', async (req, res) => {
-  const keys = loadKeys();
-  if (!keys.botToken)
-    return res.status(400).json({ ok: false, msg: '❌ BOT_TOKEN חסר' });
-
-  const webhookUrl = `https://${req.headers.host}/webhook`;
-
-  try {
-    await axios.get(
-      `https://api.telegram.org/bot${keys.botToken}/setWebhook?url=${webhookUrl}`,
-      { timeout: 8000 }
-    );
-    res.json({ ok: true, msg: '✅ הבוט הופעל בהצלחה!' });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: `❌ ${err.message}` });
   }
 });
 
