@@ -1,4 +1,7 @@
-app.use(express.json());
+const express = require('express');
+const axios   = require('axios');
+const https   = require('https');
+const app     = express();
 app.use(express.static('public'));
 
 function getKeys() {
