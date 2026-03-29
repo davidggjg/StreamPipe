@@ -24,7 +24,6 @@ app.get('/keys-status', (req, res) => {
   });
 });
 
-// ── שמירת Bot Token ──
 app.post('/save-token', async (req, res) => {
   const { botToken } = req.body;
   if (!botToken)
@@ -43,7 +42,6 @@ app.post('/save-token', async (req, res) => {
   }
 });
 
-// ── הגדרת Webhook ──
 app.post('/set-webhook', async (req, res) => {
   const keys = loadKeys();
   if (!keys.botToken)
@@ -62,7 +60,6 @@ app.post('/set-webhook', async (req, res) => {
   }
 });
 
-// ── Webhook מטלגרם ──
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 
@@ -77,11 +74,23 @@ app.post('/webhook', async (req, res) => {
   if (!video) return;
 
   const fileId   = video.file_id;
+  const fileSize = video.file_size || 0;
   const fileName = (msg.document?.file_name || video.file_name || `video_${fileId}.mp4`)
     .replace(/[^a-zA-Z0-9._-]/g, '_');
 
+  const sizeMB     = (fileSize / 1024 / 1024).toFixed(1);
+  const estSeconds = Math.ceil(fileSize / (5 * 1024 * 1024));
+  const estMinutes = Math.ceil(estSeconds / 60);
+  const timeStr    = estMinutes < 2 ? `~${estSeconds} שניות` : `~${estMinutes} דקות`;
+
   try {
-    await sendMessage(keys.botToken, chatId, `⏳ מתחיל העלאה של ${fileName}...`);
+    await sendMessage(keys.botToken, chatId,
+      `📥 קיבלתי את הקובץ!\n\n` +
+      `📄 שם: ${fileName}\n` +
+      `📦 גודל: ${sizeMB} MB\n` +
+      `⏱ זמן משוער: ${timeStr}\n\n` +
+      `⏳ מעלה לארכיון...`
+    );
 
     const fileRes = await axios.get(
       `https://api.telegram.org/bot${keys.botToken}/getFile?file_id=${fileId}`,
@@ -106,6 +115,8 @@ app.post('/webhook', async (req, res) => {
     if (stream.headers['content-length'])
       headers['Content-Length'] = stream.headers['content-length'];
 
+    const startTime = Date.now();
+
     await axios.put(uploadUrl, stream.data, {
       headers,
       maxBodyLength:    Infinity,
@@ -113,8 +124,17 @@ app.post('/webhook', async (req, res) => {
       timeout:          0,
     });
 
+    const tookSeconds = Math.ceil((Date.now() - startTime) / 1000);
+    const tookStr     = tookSeconds < 60
+      ? `${tookSeconds} שניות`
+      : `${Math.ceil(tookSeconds / 60)} דקות`;
+
     const archiveUrl = `https://archive.org/download/${keys.bucketName}/${fileName}`;
-    await sendMessage(keys.botToken, chatId, `✅ הועלה בהצלחה!\n\n🔗 ${archiveUrl}`);
+    await sendMessage(keys.botToken, chatId,
+      `✅ הועלה בהצלחה!\n\n` +
+      `⏱ לקח: ${tookStr}\n\n` +
+      `🔗 ${archiveUrl}`
+    );
 
   } catch (err) {
     console.error('[webhook] ❌', err.message);
