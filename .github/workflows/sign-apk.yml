@@ -1,0 +1,70 @@
+name: Sign APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Find APK file
+        id: find_apk
+        run: |
+          APK_PATH=$(find . -name "*.apk" | head -1)
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
+          echo "Found APK: $APK_PATH"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Android Build Tools
+        run: |
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "build-tools;34.0.0"
+
+      - name: Generate Keystore
+        run: |
+          keytool -genkey -v \
+            -keystore signing.keystore \
+            -alias mykey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass android \
+            -keypass android \
+            -dname "CN=StreamPipe, OU=Dev, O=StreamPipe, L=IL, S=IL, C=IL"
+
+      - name: Zipalign APK
+        run: |
+          $ANDROID_SDK_ROOT/build-tools/34.0.0/zipalign -v -p 4 \
+            "$APK_PATH" \
+            aligned.apk
+
+      - name: Sign APK
+        run: |
+          $ANDROID_SDK_ROOT/build-tools/34.0.0/apksigner sign \
+            --ks signing.keystore \
+            --ks-key-alias mykey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out signed.apk \
+            aligned.apk
+
+      - name: Verify signature
+        run: |
+          $ANDROID_SDK_ROOT/build-tools/34.0.0/apksigner verify --verbose signed.apk
+
+      - name: Upload signed APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-apk
+          path: signed.apk
+          retention-days: 30
