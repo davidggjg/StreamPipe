@@ -1,0 +1,29 @@
+name: Sign APK
+
+on:
+  push:
+    paths:
+      - '**.apk' # יפעל בכל פעם שתעלה קובץ APK
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign APK
+        uses: r0adkll/sign-android-release@v1
+        id: sign_app
+        with:
+          releaseDirectory: .
+          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+          alias: ${{ secrets.ALIAS }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Upload Signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Signed-APK-Result
+          path: ${{ steps.sign_app.outputs.signedReleaseFile }}
+
